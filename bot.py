@@ -319,6 +319,16 @@ def add_trade_to_history(self, trade_data):
             self.real_trade_history = self.real_trade_history[-200:]
         self.save_real_trade_history()
         
+        # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
+        try:
+            from data_collector import log_trade_for_ml
+            # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+            log_trade_for_ml(trade_data)
+            print("ML data logged → ml_training_data.csv updated!")
+        except Exception as e:
+            print(f"[ML LOG ERROR] {e}")
+        # === ဒီအထိပဲ လုံလောက်ပြီ! ===
+        
         # Better display message
         if trade_data.get('partial_percent', 100) < 100:
             self.print_color(f"📝 Partial close saved: {trade_data['pair']} {trade_data['direction']} {trade_data['partial_percent']}% | P&L: ${pnl:.2f}", self.Fore.CYAN)
@@ -756,6 +766,16 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
         else:
             pnl = (trade['entry_price'] - current_price) * trade['quantity'] * (partial_percent / 100)
         
+        # --- PEAK PnL CALCULATION (အသစ်ထည့်ရမယ့် အပိုင်း) ---
+        if 'peak_price' in trade:
+            if trade['direction'] == 'LONG':
+                peak_pnl_pct = ((trade['peak_price'] - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
+            else:  # SHORT
+                peak_pnl_pct = ((trade['entry_price'] - trade['peak_price']) / trade['entry_price']) * 100 * trade['leverage']
+        else:
+            peak_pnl_pct = 0.0
+        # --- PEAK PnL CALCULATION END ---
+        
         # If partial close, calculate the remaining position
         if partial_percent < 100:
             # This is a partial close - update the existing trade
@@ -777,6 +797,7 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
             partial_trade['partial_percent'] = partial_percent
             partial_trade['closed_quantity'] = closed_quantity
             partial_trade['closed_position_size'] = closed_position_size
+            partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
             
             self.available_budget += closed_position_size + pnl
             self.add_trade_to_history(partial_trade)
@@ -795,6 +816,7 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
             trade['close_reason'] = close_reason
             trade['close_time'] = self.get_thailand_time()
             trade['partial_percent'] = 100  # Mark as full close
+            trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
             
             self.available_budget += trade['position_size_usd'] + pnl
             self.add_trade_to_history(trade.copy())
@@ -846,7 +868,7 @@ def get_current_price(self, pair):
     self.print_color(f"🚨 All price API attempts failed for {pair}, using fallback price", self.Fore.RED)
     
     fallback_prices = {
-        "AVAXUSDT": 14.0,
+        "AVAXUSDT": 15.0,
     }
     return fallback_prices.get(pair, 100.0)
 
@@ -1610,6 +1632,16 @@ class FullyAutonomous1HourPaperTrader:
                 self.paper_history = self.paper_history[-200:]
             self.save_paper_history()
             
+            # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
+            try:
+                from data_collector import log_trade_for_ml
+                # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+                log_trade_for_ml(trade_data)
+                print("ML data logged → ml_training_data.csv updated!")
+            except Exception as e:
+                print(f"[ML LOG ERROR] {e}")
+            # === ဒီအထိပဲ လုံလောက်ပြီ! ===
+            
             # Better display message
             if trade_data.get('partial_percent', 100) < 100:
                 self.real_bot.print_color(f"📝 PAPER Partial close saved: {trade_data['pair']} {trade_data['direction']} {trade_data['partial_percent']}% | P&L: ${trade_data.get('pnl', 0):.2f}", self.Fore.CYAN)
@@ -1694,6 +1726,16 @@ class FullyAutonomous1HourPaperTrader:
             else:
                 pnl = (trade['entry_price'] - current_price) * trade['quantity'] * (partial_percent / 100)
             
+            # --- PEAK PnL CALCULATION (အသစ်ထည့်ရမယ့် အပိုင်း) ---
+            if 'peak_price' in trade:
+                if trade['direction'] == 'LONG':
+                    peak_pnl_pct = ((trade['peak_price'] - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
+                else:  # SHORT
+                    peak_pnl_pct = ((trade['entry_price'] - trade['peak_price']) / trade['entry_price']) * 100 * trade['leverage']
+            else:
+                peak_pnl_pct = 0.0
+            # --- PEAK PnL CALCULATION END ---
+            
             # If partial close, calculate the remaining position
             if partial_percent < 100:
                 # This is a partial close - update the existing trade
@@ -1715,6 +1757,7 @@ class FullyAutonomous1HourPaperTrader:
                 partial_trade['partial_percent'] = partial_percent
                 partial_trade['closed_quantity'] = closed_quantity
                 partial_trade['closed_position_size'] = closed_position_size
+                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
                 
                 self.available_budget += closed_position_size + pnl
                 self.add_paper_trade_to_history(partial_trade)
@@ -1733,6 +1776,7 @@ class FullyAutonomous1HourPaperTrader:
                 trade['close_reason'] = close_reason
                 trade['close_time'] = self.real_bot.get_thailand_time()
                 trade['partial_percent'] = 100
+                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
                 
                 self.available_budget += trade['position_size_usd'] + pnl
                 self.add_paper_trade_to_history(trade.copy())
