@@ -7,7 +7,7 @@ import os
 import time
 from datetime import datetime
 
-DATA_FILE = "sl_analysis_dataset.csv"
+DATA_FILE = "ml_training_data.csv"
 
 def classify_trade_outcome(trade_data):
     """
