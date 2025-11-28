@@ -292,6 +292,24 @@ def add_trade_to_history(self, trade_data):
         trade_data['close_timestamp'] = time.time()
         trade_data['trade_type'] = 'REAL'
         
+        # === FIX: Add missing fields for ML logging ===
+        if 'exit_price' not in trade_data:
+            # Get current price for exit price
+            current_price = self.get_current_price(trade_data['pair'])
+            trade_data['exit_price'] = current_price
+        
+        # Calculate peak_pnl_pct if not present
+        if 'peak_pnl_pct' not in trade_data:
+            if 'peak_pnl' in trade_data:
+                trade_data['peak_pnl_pct'] = trade_data['peak_pnl']
+            else:
+                # Calculate from entry and exit
+                if trade_data['direction'] == 'LONG':
+                    peak_pct = ((trade_data['exit_price'] - trade_data['entry_price']) / trade_data['entry_price']) * 100 * trade_data.get('leverage', 1)
+                else:
+                    peak_pct = ((trade_data['entry_price'] - trade_data['exit_price']) / trade_data['entry_price']) * 100 * trade_data.get('leverage', 1)
+                trade_data['peak_pnl_pct'] = max(0, peak_pct)  # At least 0
+        
         # Add partial close indicator to display
         if trade_data.get('partial_percent', 100) < 100:
             trade_data['display_type'] = f"PARTIAL_{trade_data['partial_percent']}%"
@@ -319,15 +337,23 @@ def add_trade_to_history(self, trade_data):
             self.real_trade_history = self.real_trade_history[-200:]
         self.save_real_trade_history()
         
-        # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
+        # === FIX: Better ML Logging with Error Details ===
         try:
             from data_collector import log_trade_for_ml
-            # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+            
+            # Print what we're sending to debug
+            print(f"🔧 [ML DEBUG] Sending trade data: {trade_data['pair']} | PnL: ${pnl:.2f}")
+            
+            # Call ML logging
             log_trade_for_ml(trade_data)
-            print("ML data logged → ml_training_data.csv updated!")
+            print("✅ ML data logged → ml_training_data.csv updated!")
+            
+        except ImportError as e:
+            print(f"❌ [ML ERROR] Cannot import data_collector: {e}")
         except Exception as e:
-            print(f"[ML LOG ERROR] {e}")
-        # === ဒီအထိပဲ လုံလောက်ပြီ! ===
+            print(f"❌ [ML ERROR] Logging failed: {e}")
+            # Try to create a simple CSV as fallback
+            self._create_fallback_ml_log(trade_data)
         
         # Better display message
         if trade_data.get('partial_percent', 100) < 100:
@@ -337,6 +363,38 @@ def add_trade_to_history(self, trade_data):
             
     except Exception as e:
         self.print_color(f"Error adding trade to history: {e}", self.Fore.RED)
+
+def _create_fallback_ml_log(self, trade_data):
+    """Create fallback ML log if data_collector fails"""
+    try:
+        import csv
+        import os
+        
+        csv_file = "ml_training_data_fallback.csv"
+        file_exists = os.path.isfile(csv_file)
+        
+        with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            
+            if not file_exists:
+                # Write header
+                writer.writerow(['timestamp', 'pair', 'direction', 'entry_price', 'exit_price', 'pnl', 'close_reason'])
+            
+            # Write data
+            writer.writerow([
+                trade_data.get('close_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                trade_data.get('pair', ''),
+                trade_data.get('direction', ''),
+                trade_data.get('entry_price', 0),
+                trade_data.get('exit_price', 0),
+                trade_data.get('pnl', 0),
+                trade_data.get('close_reason', '')
+            ])
+        
+        print(f"✅ Fallback ML data saved to {csv_file}")
+        
+    except Exception as e:
+        print(f"❌ Fallback ML logging also failed: {e}")
 
 def get_thailand_time(self):
     now_utc = datetime.now(pytz.utc)
@@ -766,15 +824,17 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
         else:
             pnl = (trade['entry_price'] - current_price) * trade['quantity'] * (partial_percent / 100)
         
-        # --- PEAK PnL CALCULATION (အသစ်ထည့်ရမယ့် အပိုင်း) ---
-        if 'peak_price' in trade:
-            if trade['direction'] == 'LONG':
-                peak_pnl_pct = ((trade['peak_price'] - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
-            else:  # SHORT
-                peak_pnl_pct = ((trade['entry_price'] - trade['peak_price']) / trade['entry_price']) * 100 * trade['leverage']
+        # --- PEAK PnL CALCULATION (FIXED VERSION) ---
+        peak_pnl_pct = 0.0
+        if 'peak_pnl' in trade:
+            peak_pnl_pct = trade['peak_pnl']
         else:
-            peak_pnl_pct = 0.0
-        # --- PEAK PnL CALCULATION END ---
+            # Calculate peak from current close
+            if trade['direction'] == 'LONG':
+                peak_pnl_pct = ((current_price - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
+            else:
+                peak_pnl_pct = ((trade['entry_price'] - current_price) / trade['entry_price']) * 100 * trade['leverage']
+            peak_pnl_pct = max(0, peak_pnl_pct)  # At least 0
         
         # If partial close, calculate the remaining position
         if partial_percent < 100:
@@ -797,7 +857,7 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
             partial_trade['partial_percent'] = partial_percent
             partial_trade['closed_quantity'] = closed_quantity
             partial_trade['closed_position_size'] = closed_position_size
-            partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
+            partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # ✅ FIXED: Add peak_pnl_pct
             
             self.available_budget += closed_position_size + pnl
             self.add_trade_to_history(partial_trade)
@@ -816,7 +876,7 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
             trade['close_reason'] = close_reason
             trade['close_time'] = self.get_thailand_time()
             trade['partial_percent'] = 100  # Mark as full close
-            trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
+            trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # ✅ FIXED: Add peak_pnl_pct
             
             self.available_budget += trade['position_size_usd'] + pnl
             self.add_trade_to_history(trade.copy())
@@ -1620,6 +1680,24 @@ class FullyAutonomous1HourPaperTrader:
             trade_data['close_timestamp'] = time.time()
             trade_data['trade_type'] = 'PAPER'
             
+            # === FIX: Add missing fields for ML logging (PAPER VERSION) ===
+            if 'exit_price' not in trade_data:
+                # Get current price for exit price
+                current_price = self.real_bot.get_current_price(trade_data['pair'])
+                trade_data['exit_price'] = current_price
+            
+            # Calculate peak_pnl_pct if not present
+            if 'peak_pnl_pct' not in trade_data:
+                if 'peak_pnl' in trade_data:
+                    trade_data['peak_pnl_pct'] = trade_data['peak_pnl']
+                else:
+                    # Calculate from entry and exit
+                    if trade_data['direction'] == 'LONG':
+                        peak_pct = ((trade_data['exit_price'] - trade_data['entry_price']) / trade_data['entry_price']) * 100 * trade_data.get('leverage', 1)
+                    else:
+                        peak_pct = ((trade_data['entry_price'] - trade_data['exit_price']) / trade_data['entry_price']) * 100 * trade_data.get('leverage', 1)
+                    trade_data['peak_pnl_pct'] = max(0, peak_pct)  # At least 0
+            
             # Add partial close indicator to display
             if trade_data.get('partial_percent', 100) < 100:
                 trade_data['display_type'] = f"PARTIAL_{trade_data['partial_percent']}%"
@@ -1632,15 +1710,23 @@ class FullyAutonomous1HourPaperTrader:
                 self.paper_history = self.paper_history[-200:]
             self.save_paper_history()
             
-            # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
+            # === FIX: Better ML Logging for PAPER Trading ===
             try:
                 from data_collector import log_trade_for_ml
-                # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+                
+                # Print what we're sending to debug
+                print(f"🔧 [PAPER ML DEBUG] Sending trade data: {trade_data['pair']} | PnL: ${trade_data.get('pnl', 0):.2f}")
+                
+                # Call ML logging
                 log_trade_for_ml(trade_data)
-                print("ML data logged → ml_training_data.csv updated!")
+                print("✅ PAPER ML data logged → ml_training_data.csv updated!")
+                
+            except ImportError as e:
+                print(f"❌ [PAPER ML ERROR] Cannot import data_collector: {e}")
             except Exception as e:
-                print(f"[ML LOG ERROR] {e}")
-            # === ဒီအထိပဲ လုံလောက်ပြီ! ===
+                print(f"❌ [PAPER ML ERROR] Logging failed: {e}")
+                # Try to create a simple CSV as fallback
+                self._create_paper_fallback_ml_log(trade_data)
             
             # Better display message
             if trade_data.get('partial_percent', 100) < 100:
@@ -1650,6 +1736,39 @@ class FullyAutonomous1HourPaperTrader:
                 
         except Exception as e:
             self.real_bot.print_color(f"Error adding paper trade to history: {e}", self.Fore.RED)
+
+    def _create_paper_fallback_ml_log(self, trade_data):
+        """Create fallback ML log for PAPER trading if data_collector fails"""
+        try:
+            import csv
+            import os
+            
+            csv_file = "ml_training_data_paper_fallback.csv"
+            file_exists = os.path.isfile(csv_file)
+            
+            with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                
+                if not file_exists:
+                    # Write header
+                    writer.writerow(['timestamp', 'pair', 'direction', 'entry_price', 'exit_price', 'pnl', 'close_reason', 'trade_type'])
+                
+                # Write data
+                writer.writerow([
+                    trade_data.get('close_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                    trade_data.get('pair', ''),
+                    trade_data.get('direction', ''),
+                    trade_data.get('entry_price', 0),
+                    trade_data.get('exit_price', 0),
+                    trade_data.get('pnl', 0),
+                    trade_data.get('close_reason', ''),
+                    'PAPER'  # Mark as paper trade
+                ])
+            
+            print(f"✅ PAPER Fallback ML data saved to {csv_file}")
+            
+        except Exception as e:
+            print(f"❌ PAPER Fallback ML logging also failed: {e}")
 
     def calculate_current_pnl(self, trade, current_price):
         """Calculate current PnL percentage for paper trading"""
@@ -1726,15 +1845,17 @@ class FullyAutonomous1HourPaperTrader:
             else:
                 pnl = (trade['entry_price'] - current_price) * trade['quantity'] * (partial_percent / 100)
             
-            # --- PEAK PnL CALCULATION (အသစ်ထည့်ရမယ့် အပိုင်း) ---
-            if 'peak_price' in trade:
-                if trade['direction'] == 'LONG':
-                    peak_pnl_pct = ((trade['peak_price'] - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
-                else:  # SHORT
-                    peak_pnl_pct = ((trade['entry_price'] - trade['peak_price']) / trade['entry_price']) * 100 * trade['leverage']
+            # --- PEAK PnL CALCULATION (FIXED VERSION) ---
+            peak_pnl_pct = 0.0
+            if 'peak_pnl' in trade:
+                peak_pnl_pct = trade['peak_pnl']
             else:
-                peak_pnl_pct = 0.0
-            # --- PEAK PnL CALCULATION END ---
+                # Calculate peak from current close (for paper trading)
+                if trade['direction'] == 'LONG':
+                    peak_pnl_pct = ((current_price - trade['entry_price']) / trade['entry_price']) * 100 * trade['leverage']
+                else:
+                    peak_pnl_pct = ((trade['entry_price'] - current_price) / trade['entry_price']) * 100 * trade['leverage']
+                peak_pnl_pct = max(0, peak_pnl_pct)  # At least 0
             
             # If partial close, calculate the remaining position
             if partial_percent < 100:
@@ -1757,7 +1878,7 @@ class FullyAutonomous1HourPaperTrader:
                 partial_trade['partial_percent'] = partial_percent
                 partial_trade['closed_quantity'] = closed_quantity
                 partial_trade['closed_position_size'] = closed_position_size
-                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
+                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # ✅ FIXED: Add peak_pnl_pct
                 
                 self.available_budget += closed_position_size + pnl
                 self.add_paper_trade_to_history(partial_trade)
@@ -1776,7 +1897,7 @@ class FullyAutonomous1HourPaperTrader:
                 trade['close_reason'] = close_reason
                 trade['close_time'] = self.real_bot.get_thailand_time()
                 trade['partial_percent'] = 100
-                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # အသစ်ထည့်မယ်
+                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)  # ✅ FIXED: Add peak_pnl_pct
                 
                 self.available_budget += trade['position_size_usd'] + pnl
                 self.add_paper_trade_to_history(trade.copy())
