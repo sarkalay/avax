@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 import pandas as pd
+from collections import Counter
 
 # Colorama setup
 try:
@@ -49,9 +50,226 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors() 
     Style = DummyColors()
 
+# ==================== CONFIGURATION FILE ====================
+CONFIG_FILE = "config_3percent.json"
+DEFAULT_CONFIG = {
+    "exit_strategy": "3PERCENT_AI_CHECK",
+    "min_check_level": 6,
+    "percent_increment": 3,
+    "force_milestone_partials": True,
+    "milestone_levels": [10, 15, 20, 25, 30],
+    "time_check_minutes": 15,
+    "emergency_stop": -5,
+    "drawdown_protection": {
+        "from_peak_6": 6,
+        "from_peak_4": 4,
+        "from_peak_2": 2
+    },
+    "paper_trading": {
+        "virtual_balance": 500,
+        "max_positions": 6
+    },
+    "auto_calibration": {
+        "enabled": True,
+        "volatility_threshold_high": 2.0,
+        "volatility_threshold_low": 1.0
+    }
+}
+
+# ==================== PERFORMANCE ANALYTICS ====================
+class PerformanceAnalytics:
+    def __init__(self):
+        self.analytics_file = "trading_analytics.json"
+        self.analytics_data = self.load_analytics()
+    
+    def load_analytics(self):
+        """Load analytics data"""
+        try:
+            if os.path.exists(self.analytics_file):
+                with open(self.analytics_file, 'r') as f:
+                    return json.load(f)
+            return {
+                "level_decisions": [],
+                "trade_history": [],
+                "calibration_history": []
+            }
+        except Exception as e:
+            print(f"Error loading analytics: {e}")
+            return {
+                "level_decisions": [],
+                "trade_history": [],
+                "calibration_history": []
+            }
+    
+    def save_analytics(self):
+        """Save analytics data"""
+        try:
+            with open(self.analytics_file, 'w') as f:
+                json.dump(self.analytics_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving analytics: {e}")
+    
+    def log_level_decision(self, pair, level, ai_decision, result_pnl):
+        """Log every 3% level decision"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "pair": pair,
+            "level": level,
+            "ai_decision": ai_decision.get("action", "UNKNOWN"),
+            "partial_percent": ai_decision.get("partial_percent", 0),
+            "result_pnl": result_pnl,
+            "confidence": ai_decision.get("confidence", 0)
+        }
+        
+        if "level_decisions" not in self.analytics_data:
+            self.analytics_data["level_decisions"] = []
+        
+        self.analytics_data["level_decisions"].append(entry)
+        
+        # Keep only last 1000 entries
+        if len(self.analytics_data["level_decisions"]) > 1000:
+            self.analytics_data["level_decisions"] = self.analytics_data["level_decisions"][-1000:]
+        
+        self.save_analytics()
+    
+    def analyze_best_levels(self):
+        """Which 3% levels give best results?"""
+        if "level_decisions" not in self.analytics_data:
+            return {}
+        
+        level_stats = {}
+        for entry in self.analytics_data["level_decisions"]:
+            level = entry["level"]
+            if level not in level_stats:
+                level_stats[level] = {
+                    "count": 0,
+                    "total_pnl": 0,
+                    "avg_pnl": 0,
+                    "decisions": {"HOLD": 0, "PARTIAL": 0, "FULL": 0}
+                }
+            
+            level_stats[level]["count"] += 1
+            level_stats[level]["total_pnl"] += entry["result_pnl"]
+            level_stats[level]["decisions"][entry["ai_decision"]] += 1
+        
+        # Calculate averages
+        for level, stats in level_stats.items():
+            if stats["count"] > 0:
+                stats["avg_pnl"] = stats["total_pnl"] / stats["count"]
+        
+        return level_stats
+    
+    def show_analytics_dashboard(self):
+        """Show analytics dashboard"""
+        stats = self.analyze_best_levels()
+        
+        print("\n📊 3% LEVEL ANALYTICS")
+        print("=" * 80)
+        
+        if not stats:
+            print("No analytics data available yet.")
+            return
+        
+        print(f"{'Level':<10} {'Count':<8} {'Avg P&L':<12} {'HOLD':<8} {'PARTIAL':<10} {'FULL':<8}")
+        print("-" * 80)
+        
+        for level in sorted(stats.keys()):
+            s = stats[level]
+            if s["count"] >= 3:  # Only show levels with enough data
+                print(f"+{level}%:    {s['count']:<8} ${s['avg_pnl']:<11.2f} "
+                      f"{s['decisions'].get('HOLD', 0):<8} "
+                      f"{s['decisions'].get('PARTIAL', 0):<10} "
+                      f"{s['decisions'].get('FULL', 0):<8}")
+
+# ==================== AUTO-CALIBRATING SYSTEM ====================
+class AutoCalibrating3PercentSystem:
+    def __init__(self, config):
+        self.performance_history = []
+        self.config = config
+        self.optimal_increment = config.get("percent_increment", 3)
+        self.optimal_start_level = config.get("min_check_level", 6)
+        self.calibration_history = []
+    
+    def calibrate_based_on_market(self, volatility):
+        """Market volatility အလိုက် auto calibrate"""
+        auto_calibration = self.config.get("auto_calibration", {})
+        
+        if not auto_calibration.get("enabled", False):
+            return
+        
+        volatility_high = auto_calibration.get("volatility_threshold_high", 2.0)
+        volatility_low = auto_calibration.get("volatility_threshold_low", 1.0)
+        
+        # High volatility = wider increments
+        # Low volatility = tighter increments
+        
+        if volatility > volatility_high:  # High volatility
+            self.optimal_increment = 4  # Every 4%
+            self.optimal_start_level = 8  # Start at 8%
+            calibration_type = "HIGH_VOLATILITY"
+        elif volatility > volatility_low:  # Medium volatility
+            self.optimal_increment = 3  # Every 3%
+            self.optimal_start_level = 6  # Start at 6%
+            calibration_type = "MEDIUM_VOLATILITY"
+        else:  # Low volatility
+            self.optimal_increment = 2  # Every 2%
+            self.optimal_start_level = 4  # Start at 4%
+            calibration_type = "LOW_VOLATILITY"
+        
+        # Log calibration
+        self.calibration_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "volatility": volatility,
+            "increment": self.optimal_increment,
+            "start_level": self.optimal_start_level,
+            "type": calibration_type
+        })
+        
+        # Keep only last 100 calibrations
+        if len(self.calibration_history) > 100:
+            self.calibration_history = self.calibration_history[-100:]
+    
+    def calibrate_based_on_performance(self):
+        """Past performance အလိုက် calibrate"""
+        if len(self.performance_history) < 10:
+            return
+        
+        # Analyze which levels worked best
+        successful_levels = []
+        for trade in self.performance_history:
+            if trade.get('pnl', 0) > 0:
+                # Which levels were hit in profitable trades?
+                for level in trade.get('levels_hit', []):
+                    successful_levels.append(level)
+        
+        if successful_levels:
+            # Find most common successful level
+            level_counts = Counter(successful_levels)
+            most_common_level = level_counts.most_common(1)[0][0]
+            
+            # Adjust start level
+            self.optimal_start_level = most_common_level - 3
+            if self.optimal_start_level < 3:
+                self.optimal_start_level = 3
+            
+            # Log calibration
+            self.calibration_history.append({
+                "timestamp": datetime.now().isoformat(),
+                "most_common_level": most_common_level,
+                "start_level": self.optimal_start_level,
+                "increment": self.optimal_increment,
+                "type": "PERFORMANCE_BASED"
+            })
+            
+            if len(self.calibration_history) > 100:
+                self.calibration_history = self.calibration_history[-100:]
+
 # ==================== V6.0 EVERY 3% AI CHECK SYSTEM ====================
 class FullyAutonomous1HourAITrader:
     def __init__(self):
+        # Load configuration
+        self.config = self.load_config()
+        
         self._initialize_trading()
         
         if LEARN_SCRIPT_AVAILABLE:
@@ -71,9 +289,47 @@ class FullyAutonomous1HourAITrader:
                 'improvement_areas': []
             }
         
+        # Performance Analytics
+        self.analytics = PerformanceAnalytics()
+        
+        # Auto-calibration
+        self.calibrator = AutoCalibrating3PercentSystem(self.config)
+        
         # 3% Increment System
         self.checked_3percent_levels = {}  # {pair: [checked_levels]}
         self.last_ai_check_time = {}
+        
+    def load_config(self):
+        """Load configuration from file or create default"""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+                    print("✅ Configuration loaded from file")
+                    return config
+            else:
+                # Create default config file
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(DEFAULT_CONFIG, f, indent=2)
+                print("✅ Default configuration created")
+                return DEFAULT_CONFIG
+        except Exception as e:
+            print(f"❌ Error loading config: {e}, using defaults")
+            return DEFAULT_CONFIG
+    
+    def save_config(self):
+        """Save current configuration to file"""
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            print("✅ Configuration saved")
+        except Exception as e:
+            print(f"❌ Error saving config: {e}")
+    
+    def update_config(self, updates):
+        """Update configuration"""
+        self.config.update(updates)
+        self.save_config()
         
     def _initialize_trading(self):
         """Initialize trading components"""
@@ -118,12 +374,21 @@ class FullyAutonomous1HourAITrader:
         self.quantity_precision = {}
         self.price_precision = {}
         
-        # 🆕 EVERY 3% AI CHECK SETTINGS
-        self.exit_strategy_mode = "3PERCENT_AI_CHECK"  # "HARD_RULES", "AI_ONLY", "3PERCENT_AI_CHECK"
-        self.min_check_level = 6  # Start checking at 6%
-        self.percent_increment = 3  # Every 3%
-        self.force_partial_at_milestones = True  # Force partial at 10%, 15%, 20%, etc
-        self.time_based_check_minutes = 15  # Check every 15 minutes regardless of level
+        # 🆕 EVERY 3% AI CHECK SETTINGS FROM CONFIG
+        self.exit_strategy_mode = self.config.get("exit_strategy", "3PERCENT_AI_CHECK")
+        self.min_check_level = self.config.get("min_check_level", 6)
+        self.percent_increment = self.config.get("percent_increment", 3)
+        self.force_partial_at_milestones = self.config.get("force_milestone_partials", True)
+        self.milestone_levels = self.config.get("milestone_levels", [10, 15, 20, 25, 30])
+        self.time_based_check_minutes = self.config.get("time_check_minutes", 15)
+        self.emergency_stop = self.config.get("emergency_stop", -5)
+        
+        # Drawdown protection settings
+        self.drawdown_protection = self.config.get("drawdown_protection", {
+            "from_peak_6": 6,
+            "from_peak_4": 4,
+            "from_peak_2": 2
+        })
         
         # Reverse position settings
         self.allow_reverse_positions = True
@@ -139,10 +404,10 @@ class FullyAutonomous1HourAITrader:
             self.binance = Client(self.binance_api_key, self.binance_secret)
             print("🤖 FULLY AUTONOMOUS AI TRADER V6.0 ACTIVATED!")
             print(f"💰 TOTAL BUDGET: ${self.total_budget}")
-            print(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK")
+            print(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK")
             print(f"📊 Check starts at: {self.min_check_level}%")
             print(f"⏰ Additional checks: Every {self.time_based_check_minutes} minutes")
-            print(f"📈 Force partial at: 10%, 15%, 20% milestones")
+            print(f"📈 Force partial at milestones: {'ON' if self.force_partial_at_milestones else 'OFF'}")
         except Exception as e:
             print(f"Binance initialization failed: {e}")
             self.binance = None
@@ -151,6 +416,62 @@ class FullyAutonomous1HourAITrader:
         if self.binance:
             self.setup_futures()
             self.load_symbol_precision()
+    
+    # ==================== BETTER ERROR HANDLING ====================
+    def robust_ai_exit_decision(self, pair, trade, market_data, current_level):
+        """ပိုပြီး robust ဖြစ်တဲ့ AI decision"""
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Try main AI
+                return self.get_ai_exit_decision_at_level(pair, trade, market_data, current_level)
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    return self.get_smart_fallback_decision(pair, trade, current_level)
+            except Exception as e:
+                self.print_color(f"AI Error (attempt {attempt+1}): {e}", self.Fore.YELLOW)
+                time.sleep(1)
+        
+        return self.get_smart_fallback_decision(pair, trade, current_level)
+    
+    def get_smart_fallback_decision(self, pair, trade, current_level):
+        """AI fail ရင် smart fallback"""
+        
+        # Progressive fallback based on level
+        fallback_rules = {
+            6: {"partial": 10, "reason": "First profit level"},
+            9: {"partial": 15, "reason": "Initial profit target"},
+            12: {"partial": 20, "reason": "Good profit level"},
+            15: {"partial": 25, "reason": "Strong profit level"},
+            18: {"partial": 30, "reason": "Very good profit"},
+            21: {"partial": 35, "reason": "Excellent profit"},
+            24: {"partial": 40, "reason": "Outstanding profit"},
+            27: {"partial": 50, "reason": "Amazing profit"},
+            30: {"partial": 60, "reason": "Maximum profit level"}
+        }
+        
+        if current_level in fallback_rules:
+            rule = fallback_rules[current_level]
+            return {
+                "should_close": True,
+                "partial_percent": rule["partial"],
+                "close_type": f"FALLBACK_LEVEL_{current_level}",
+                "reasoning": f"AI failed: {rule['reason']} at +{current_level}%",
+                "confidence": 75
+            }
+        
+        # Default fallback
+        return {
+            "should_close": True,
+            "partial_percent": min(30, current_level * 2),
+            "close_type": "DEFAULT_FALLBACK",
+            "reasoning": f"Taking profit at +{current_level}% (AI unavailable)",
+            "confidence": 70
+        }
     
     # ==================== CORE FUNCTIONS ====================
     def load_real_trade_history(self):
@@ -401,6 +722,36 @@ class FullyAutonomous1HourAITrader:
         current_vol = volumes[-1]
         return current_vol > avg_vol * 1.8
     
+    def calculate_market_volatility(self, pair):
+        """Calculate market volatility for auto-calibration"""
+        try:
+            url = "https://api.binance.com/api/v3/klines"
+            params = {
+                'symbol': pair,
+                'interval': '1h',
+                'limit': 24  # Last 24 hours
+            }
+            
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                klines = response.json()
+                closes = [float(k[4]) for k in klines]
+                
+                # Calculate daily volatility (standard deviation of returns)
+                returns = []
+                for i in range(1, len(closes)):
+                    ret = (closes[i] - closes[i-1]) / closes[i-1]
+                    returns.append(ret)
+                
+                if returns:
+                    volatility = np.std(returns) * 100  # Convert to percentage
+                    return volatility
+                
+        except Exception as e:
+            self.print_color(f"Volatility calculation error: {e}", self.Fore.YELLOW)
+        
+        return 1.0  # Default medium volatility
+    
     def get_price_history(self, pair, limit=50):
         """Multi-Timeframe Analysis with REAL Binance data"""
         try:
@@ -582,14 +933,17 @@ Return JSON:
         
         return self.get_improved_fallback_decision(pair, market_data)
     
-    def get_ai_exit_decision_at_level(self, pair, trade, market_data, current_level, current_pnl):
+    def get_ai_exit_decision_at_level(self, pair, trade, market_data, current_level):
         """Ask AI for exit decision at specific 3% level"""
         try:
             if not self.openrouter_key:
-                return self.get_fallback_exit_decision_at_level(pair, trade, current_level, current_pnl)
+                return self.get_fallback_exit_decision_at_level(pair, trade, current_level)
+            
+            current_price = market_data['current_price']
+            current_pnl = self.calculate_current_pnl(trade, current_price)
             
             prompt = f"""
-SPECIFIC 3% LEVEL CHECK: {pair} reached +{current_pnl:.1f}% (Level {current_level}%)
+SPECIFIC {self.percent_increment}% LEVEL CHECK: {pair} reached +{current_pnl:.1f}% (Level {current_level}%)
 
 POSITION DETAILS:
 - Direction: {trade['direction']}
@@ -617,7 +971,7 @@ OPTIONS:
 3. CLOSE FULLY - Take all profit now
 
 CONSIDER:
-- Next 3% level is at +{current_level + self.percent_increment}%
+- Next {self.percent_increment}% level is at +{current_level + self.percent_increment}%
 - Risk/reward ratio at current level
 - Market momentum and trend
 - Time in trade: {((time.time() - trade.get('entry_time', time.time())) / 3600):.1f} hours
@@ -642,7 +996,7 @@ Return JSON:
             data = {
                 "model": "deepseek/deepseek-chat-v3.1",
                 "messages": [
-                    {"role": "system", "content": "You are an AI trader making specific exit decisions at each 3% profit level. Be precise about partial profit percentages."},
+                    {"role": "system", "content": f"You are an AI trader making specific exit decisions at each {self.percent_increment}% profit level. Be precise about partial profit percentages."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
@@ -655,12 +1009,56 @@ Return JSON:
             if response.status_code == 200:
                 result = response.json()
                 ai_response = result['choices'][0]['message']['content']
-                return self.parse_ai_level_exit_decision(ai_response, current_level)
+                
+                # Parse AI response
+                json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                    decision_data = json.loads(json_str)
+                    
+                    action = decision_data.get('action', 'HOLD_NEXT_LEVEL')
+                    confidence = decision_data.get('confidence', 50)
+                    reasoning = decision_data.get('reasoning', 'No reason')
+                    
+                    if action == 'HOLD_NEXT_LEVEL':
+                        return {
+                            "should_close": False,
+                            "next_level": decision_data.get('next_check_at', current_level + self.percent_increment),
+                            "reasoning": reasoning,
+                            "confidence": confidence
+                        }
+                    
+                    elif action == 'TAKE_PARTIAL':
+                        partial_percent = decision_data.get('partial_percent', 30)
+                        
+                        # Log to analytics
+                        self.analytics.log_level_decision(pair, current_level, decision_data, 0)
+                        
+                        return {
+                            "should_close": True,
+                            "partial_percent": partial_percent,
+                            "close_type": f"AI_{self.percent_increment}PERCENT_LEVEL_{current_level}",
+                            "reasoning": reasoning,
+                            "confidence": confidence
+                        }
+                    
+                    elif action == 'CLOSE_FULL':
+                        # Log to analytics
+                        self.analytics.log_level_decision(pair, current_level, decision_data, 0)
+                        
+                        return {
+                            "should_close": True,
+                            "partial_percent": 100,
+                            "close_type": f"AI_FULL_AT_{current_level}",
+                            "reasoning": reasoning,
+                            "confidence": confidence
+                        }
+                    
+            return self.get_fallback_exit_decision_at_level(pair, trade, current_level)
                 
         except Exception as e:
             self.print_color(f"AI Level Exit decision failed: {e}", self.Fore.YELLOW)
-        
-        return self.get_fallback_exit_decision_at_level(pair, trade, current_level, current_pnl)
+            return self.get_fallback_exit_decision_at_level(pair, trade, current_level)
     
     def parse_ai_trading_decision(self, ai_response, pair, current_price, current_trade=None):
         """Parse AI's trading decision"""
@@ -698,51 +1096,6 @@ Return JSON:
             self.print_color(f"AI response parsing failed: {e}", self.Fore.RED)
         
         return self.get_improved_fallback_decision(pair, {'current_price': current_price})
-    
-    def parse_ai_level_exit_decision(self, ai_response, current_level):
-        """Parse AI's level-based exit decision"""
-        try:
-            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                decision_data = json.loads(json_str)
-                
-                action = decision_data.get('action', 'HOLD_NEXT_LEVEL')
-                confidence = decision_data.get('confidence', 50)
-                reasoning = decision_data.get('reasoning', 'No reason')
-                
-                if action == 'HOLD_NEXT_LEVEL':
-                    return {
-                        "should_close": False,
-                        "next_level": decision_data.get('next_check_at', current_level + self.percent_increment),
-                        "reasoning": reasoning,
-                        "confidence": confidence
-                    }
-                
-                elif action == 'TAKE_PARTIAL':
-                    partial_percent = decision_data.get('partial_percent', 30)
-                    
-                    return {
-                        "should_close": True,
-                        "partial_percent": partial_percent,
-                        "close_type": f"AI_3PERCENT_LEVEL_{current_level}",
-                        "reasoning": reasoning,
-                        "confidence": confidence
-                    }
-                
-                elif action == 'CLOSE_FULL':
-                    return {
-                        "should_close": True,
-                        "partial_percent": 100,
-                        "close_type": f"AI_FULL_AT_{current_level}",
-                        "reasoning": reasoning,
-                        "confidence": confidence
-                    }
-        
-        except Exception as e:
-            self.print_color(f"Failed to parse AI level exit decision: {e}", self.Fore.RED)
-        
-        return {"should_close": False}
     
     def get_improved_fallback_decision(self, pair, market_data):
         """Better fallback decision"""
@@ -808,7 +1161,7 @@ Return JSON:
                 "should_reverse": False
             }
     
-    def get_fallback_exit_decision_at_level(self, pair, trade, current_level, current_pnl):
+    def get_fallback_exit_decision_at_level(self, pair, trade, current_level):
         """Fallback exit decision at specific level"""
         # Progressive partial closing based on level
         if current_level >= 24:
@@ -869,9 +1222,9 @@ Return JSON:
             # Add to checked levels
             self.checked_3percent_levels[pair].append(current_level)
             
-            # Ask AI for decision at this level
+            # Ask AI for decision at this level (with robust error handling)
             market_data = self.get_price_history(pair)
-            ai_decision = self.get_ai_exit_decision_at_level(pair, trade, market_data, current_level, current_pnl)
+            ai_decision = self.robust_ai_exit_decision(pair, trade, market_data, current_level)
             
             return ai_decision
         
@@ -885,9 +1238,7 @@ Return JSON:
         if not self.force_partial_at_milestones:
             return {"should_close": False}
         
-        milestone_levels = [10, 15, 20, 25, 30]
-        
-        for milestone in milestone_levels:
+        for milestone in self.milestone_levels:
             if current_pnl >= milestone and current_pnl < milestone + 1:
                 # Check if we already took partial at this milestone
                 milestone_key = f"{pair}_milestone_{milestone}"
@@ -922,7 +1273,7 @@ Return JSON:
         # Calculate hours in trade
         hours_in_trade = (current_time - entry_time) / 3600
         
-        # Check every 15 minutes
+        # Check every X minutes (from config)
         last_check = self.last_ai_check_time.get(pair, 0)
         if current_time - last_check >= (self.time_based_check_minutes * 60):
             self.last_ai_check_time[pair] = current_time
@@ -1040,30 +1391,34 @@ Return JSON:
         # Calculate drawdown from peak
         drawdown = peak - current_pnl
         
-        # Drawdown protection rules
-        if drawdown >= 6:  # Lost 6% from peak
+        # Drawdown protection rules from config
+        dd6 = self.drawdown_protection.get("from_peak_6", 6)
+        dd4 = self.drawdown_protection.get("from_peak_4", 4)
+        dd2 = self.drawdown_protection.get("from_peak_2", 2)
+        
+        if drawdown >= dd6:  # Lost X% from peak
             return {
                 "should_close": True,
                 "partial_percent": 100,
-                "close_type": "PEAK_DRAWDOWN_6",
+                "close_type": f"PEAK_DRAWDOWN_{dd6}",
                 "reasoning": f"🚨 Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 90
             }
         
-        elif drawdown >= 4:  # Lost 4% from peak
+        elif drawdown >= dd4:  # Lost X% from peak
             return {
                 "should_close": True,
                 "partial_percent": 50,
-                "close_type": "PEAK_DRAWDOWN_4",
+                "close_type": f"PEAK_DRAWDOWN_{dd4}",
                 "reasoning": f"⚠️ Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 80
             }
         
-        elif drawdown >= 2 and peak >= 15:  # Lost 2% from 15%+ peak
+        elif drawdown >= dd2 and peak >= 15:  # Lost X% from 15%+ peak
             return {
                 "should_close": True,
                 "partial_percent": 30,
-                "close_type": "PEAK_DRAWDOWN_2",
+                "close_type": f"PEAK_DRAWDOWN_{dd2}",
                 "reasoning": f"Lost {drawdown:.1f}% from high peak {peak:.1f}%",
                 "confidence": 75
             }
@@ -1075,12 +1430,12 @@ Return JSON:
         
         # Check emergency stops first (always highest priority)
         current_pnl = self.calculate_current_pnl(trade, self.get_current_price(pair))
-        if current_pnl <= -5.0:
+        if current_pnl <= self.emergency_stop:
             return {
                 "should_close": True,
                 "partial_percent": 100,
-                "close_type": "EMERGENCY_STOP_5",
-                "reasoning": f"🚨 Emergency stop at -{abs(current_pnl):.1f}%",
+                "close_type": f"EMERGENCY_STOP_{abs(self.emergency_stop)}",
+                "reasoning": f"🚨 Emergency stop at {current_pnl:.1f}%",
                 "confidence": 100
             }
         
@@ -1191,6 +1546,14 @@ Return JSON:
                 self.available_budget += closed_position_size + pnl
                 self.add_trade_to_history(partial_trade)
                 
+                # Update performance history for calibration
+                self.calibrator.performance_history.append({
+                    'pair': pair,
+                    'pnl': pnl,
+                    'levels_hit': self.checked_3percent_levels.get(pair, []),
+                    'partial_percent': partial_percent
+                })
+                
                 pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
                 self.print_color(f"✅ Partial Close | {pair} | {partial_percent}% | P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
                 self.print_color(f"📊 Remaining: {remaining_quantity:.4f} {pair} (${trade['position_size_usd']:.2f})", self.Fore.CYAN)
@@ -1209,11 +1572,23 @@ Return JSON:
                 self.available_budget += trade['position_size_usd'] + pnl
                 self.add_trade_to_history(trade.copy())
                 
+                # Update performance history for calibration
+                self.calibrator.performance_history.append({
+                    'pair': pair,
+                    'pnl': pnl,
+                    'levels_hit': self.checked_3percent_levels.get(pair, []),
+                    'partial_percent': 100
+                })
+                
                 pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
                 self.print_color(f"✅ Full Close | {pair} | P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
                 
                 if pair in self.ai_opened_trades:
                     del self.ai_opened_trades[pair]
+                
+                # Clean up checked levels
+                if pair in self.checked_3percent_levels:
+                    del self.checked_3percent_levels[pair]
                 
                 return True
                 
@@ -1254,14 +1629,14 @@ Return JSON:
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if decision == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if decision == 'LONG' else "🔴 SHORT"
             
-            self.print_color(f"\n🤖 DEEPSEEK TRADE EXECUTION (3% AI CHECK SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"\n🤖 DEEPSEEK TRADE EXECUTION ({self.percent_increment}% AI CHECK SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color("=" * 80, self.Fore.CYAN)
             self.print_color(f"{direction_icon} {pair}", direction_color)
             self.print_color(f"POSITION SIZE: ${position_size_usd:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
             self.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
             self.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
             self.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-            self.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+            self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
             self.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
             self.print_color(f"⏰ Time checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
             self.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
@@ -1306,7 +1681,7 @@ Return JSON:
             self.checked_3percent_levels[pair] = []
             
             self.print_color(f"✅ TRADE EXECUTED: {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
-            self.print_color(f"📊 AI will check at every 3% profit level", self.Fore.BLUE)
+            self.print_color(f"📊 AI will check at every {self.percent_increment}% profit level", self.Fore.BLUE)
             return True
             
         except Exception as e:
@@ -1323,7 +1698,7 @@ Return JSON:
                 if trade['status'] != 'ACTIVE':
                     continue
                 
-                self.print_color(f"🔍 3% System Checking {pair}...", self.Fore.BLUE)
+                self.print_color(f"🔍 {self.percent_increment}% System Checking {pair}...", self.Fore.BLUE)
                 
                 # Get exit decision from 3% system
                 exit_decision = self.get_3percent_exit_decision(pair, trade)
@@ -1334,7 +1709,7 @@ Return JSON:
                     partial_percent = exit_decision.get("partial_percent", 100)
                     confidence = exit_decision.get("confidence", 0)
                     
-                    self.print_color(f"🎯 3% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
+                    self.print_color(f"🎯 {self.percent_increment}% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
                     self.print_color(f"   Action: {'PARTIAL' if partial_percent < 100 else 'FULL'} CLOSE", self.Fore.YELLOW)
                     self.print_color(f"   Type: {close_type}", self.Fore.MAGENTA)
                     self.print_color(f"   Confidence: {confidence}%", self.Fore.GREEN if confidence > 70 else self.Fore.YELLOW)
@@ -1343,10 +1718,6 @@ Return JSON:
                     success = self.close_trade_immediately(pair, trade, f"{close_type}: {reasoning}", partial_percent)
                     if success and partial_percent == 100:
                         closed_trades.append(pair)
-                        
-                        # Clean up checked levels
-                        if pair in self.checked_3percent_levels:
-                            del self.checked_3percent_levels[pair]
             
             return closed_trades
                 
@@ -1359,10 +1730,10 @@ Return JSON:
         """Display trading dashboard"""
         self.print_color(f"\n🤖 AI TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 90, self.Fore.CYAN)
-        self.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
-        self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+3}%, {self.min_check_level+6}%, etc.", self.Fore.MAGENTA)
+        self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
-        self.print_color(f"💰 Milestone Partials: 10%, 15%, 20%, etc.", self.Fore.GREEN)
+        self.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
         self.print_color(f"📉 Drawdown Protection: Active", self.Fore.RED)
         
         active_count = 0
@@ -1396,8 +1767,9 @@ Return JSON:
                 
                 if 'peak_pnl' in trade:
                     peak = trade['peak_pnl']
-                    self.print_color(f"   🏔️ Peak: {peak:.1f}% | Drawdown: {max(0, peak - current_pnl):.1f}%", 
-                                   self.Fore.YELLOW if peak - current_pnl <= 2 else self.Fore.RED)
+                    drawdown = max(0, peak - current_pnl)
+                    drawdown_color = self.Fore.YELLOW if drawdown <= 2 else self.Fore.RED
+                    self.print_color(f"   🏔️ Peak: {peak:.1f}% | Drawdown: {drawdown:.1f}%", drawdown_color)
                 
                 self.print_color("   " + "-" * 60, self.Fore.CYAN)
         
@@ -1454,10 +1826,52 @@ Return JSON:
         self.print_color(f"Average P&L per Trade: ${avg_trade:.2f}", self.Fore.WHITE)
         self.print_color(f"Available Budget: ${self.available_budget:.2f}", self.Fore.CYAN + self.Style.BRIGHT)
     
+    def show_analytics_menu(self):
+        """Show analytics menu"""
+        while True:
+            print("\n" + "="*60)
+            print("📊 ANALYTICS MENU")
+            print("="*60)
+            print("1. Show 3% Level Analytics")
+            print("2. Show Configuration")
+            print("3. Show Auto-calibration Status")
+            print("4. Back to Main Menu")
+            
+            choice = input("\nSelect option (1-4): ").strip()
+            
+            if choice == "1":
+                self.analytics.show_analytics_dashboard()
+                input("\nPress Enter to continue...")
+            
+            elif choice == "2":
+                print("\n🔧 CURRENT CONFIGURATION:")
+                print(json.dumps(self.config, indent=2))
+                input("\nPress Enter to continue...")
+            
+            elif choice == "3":
+                print("\n⚙️ AUTO-CALIBRATION STATUS:")
+                print(f"Optimal increment: {self.calibrator.optimal_increment}%")
+                print(f"Optimal start level: {self.calibrator.optimal_start_level}%")
+                print(f"Performance history: {len(self.calibrator.performance_history)} trades")
+                print(f"Calibration history: {len(self.calibrator.calibration_history)} entries")
+                
+                if self.calibrator.calibration_history:
+                    print("\nRecent calibrations:")
+                    for i, cal in enumerate(self.calibrator.calibration_history[-5:]):
+                        print(f"  {i+1}. {cal['timestamp']} - {cal['type']} (Increment: {cal['increment']}%, Start: {cal['start_level']}%)")
+                
+                input("\nPress Enter to continue...")
+            
+            elif choice == "4":
+                break
+    
     # ==================== MAIN TRADING LOOP ====================
     def run_trading_cycle(self):
         """Run trading cycle"""
         try:
+            # Run auto-calibration
+            self.run_auto_calibration()
+            
             # Monitor and close positions
             self.monitor_positions()
             self.display_dashboard()
@@ -1466,6 +1880,10 @@ Return JSON:
             if hasattr(self, 'cycle_count') and self.cycle_count % 4 == 0:
                 self.show_trade_history(8)
                 self.show_trading_stats()
+                
+                # Show analytics every 8 cycles
+                if self.cycle_count % 8 == 0:
+                    self.analytics.show_analytics_dashboard()
             
             self.print_color(f"\n🔍 DEEPSEEK SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
             
@@ -1493,51 +1911,113 @@ Return JSON:
         except Exception as e:
             self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
     
+    def run_auto_calibration(self):
+        """Run auto-calibration"""
+        try:
+            # Calculate average market volatility
+            volatilities = []
+            for pair in self.available_pairs[:3]:  # Check first 3 pairs
+                vol = self.calculate_market_volatility(pair)
+                volatilities.append(vol)
+            
+            avg_volatility = sum(volatilities) / len(volatilities) if volatilities else 1.0
+            
+            # Calibrate based on market volatility
+            self.calibrator.calibrate_based_on_market(avg_volatility)
+            
+            # Calibrate based on performance
+            self.calibrator.calibrate_based_on_performance()
+            
+            # Update config if calibration changed parameters
+            if (self.calibrator.optimal_increment != self.percent_increment or 
+                self.calibrator.optimal_start_level != self.min_check_level):
+                
+                old_increment = self.percent_increment
+                old_start = self.min_check_level
+                
+                self.percent_increment = self.calibrator.optimal_increment
+                self.min_check_level = self.calibrator.optimal_start_level
+                
+                # Update config
+                self.config['percent_increment'] = self.percent_increment
+                self.config['min_check_level'] = self.min_check_level
+                self.save_config()
+                
+                self.print_color(f"🔄 Auto-calibration updated: {old_increment}%->{self.percent_increment}%, Start {old_start}%->{self.min_check_level}%", self.Fore.CYAN)
+                
+        except Exception as e:
+            self.print_color(f"Auto-calibration error: {e}", self.Fore.YELLOW)
+    
     def start_trading(self):
         """Start trading"""
-        self.print_color("🚀 STARTING AI TRADER V6.0 WITH 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("🚀 STARTING AI TRADER V6.0 WITH ENHANCED 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("💰 AI MANAGING $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
-        self.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
-        self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+3}%, {self.min_check_level+6}%, etc.", self.Fore.MAGENTA)
+        self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
-        self.print_color(f"💰 Milestone Partials: 10%, 15%, 20%, etc.", self.Fore.GREEN)
+        self.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
+        self.print_color(f"⚙️ Auto-calibration: {'ON' if self.config.get('auto_calibration', {}).get('enabled', False) else 'OFF'}", self.Fore.CYAN)
         
         # Configuration options
-        print("\n" + "="*60)
-        print("3% AI Check Configuration:")
+        print("\n" + "="*70)
+        print("ENHANCED 3% AI CHECK CONFIGURATION:")
         print(f"1. Start checking at: {self.min_check_level}%")
         print(f"2. Check every: {self.percent_increment}%")
         print(f"3. Time checks every: {self.time_based_check_minutes} minutes")
         print(f"4. Force partial at milestones: {'ON' if self.force_partial_at_milestones else 'OFF'}")
+        print(f"5. Emergency stop at: {self.emergency_stop}%")
+        print(f"6. Auto-calibration: {'ON' if self.config.get('auto_calibration', {}).get('enabled', False) else 'OFF'}")
+        print(f"7. View Analytics Dashboard")
         
-        config_choice = input("\nConfigure settings? (y/N): ").strip().lower()
+        config_choice = input("\nConfigure settings? (y/N/7): ").strip().lower()
+        
         if config_choice == 'y':
             try:
                 min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
                 if min_level:
                     self.min_check_level = int(min_level)
+                    self.config['min_check_level'] = self.min_check_level
                 
                 increment = input(f"Check every % (default {self.percent_increment}): ").strip()
                 if increment:
                     self.percent_increment = int(increment)
+                    self.config['percent_increment'] = self.percent_increment
                 
                 time_check = input(f"Time checks every minutes (default {self.time_based_check_minutes}): ").strip()
                 if time_check:
                     self.time_based_check_minutes = int(time_check)
+                    self.config['time_check_minutes'] = self.time_based_check_minutes
+                
+                emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
+                if emergency:
+                    self.emergency_stop = int(emergency)
+                    self.config['emergency_stop'] = self.emergency_stop
                 
                 milestone = input(f"Force partial at milestones? (y/N): ").strip().lower()
                 self.force_partial_at_milestones = (milestone == 'y')
+                self.config['force_milestone_partials'] = self.force_partial_at_milestones
                 
-                self.print_color("✅ Configuration updated!", self.Fore.GREEN)
+                auto_cal = input(f"Enable auto-calibration? (y/N): ").strip().lower()
+                if 'auto_calibration' not in self.config:
+                    self.config['auto_calibration'] = {}
+                self.config['auto_calibration']['enabled'] = (auto_cal == 'y')
+                
+                self.save_config()
+                self.print_color("✅ Configuration updated and saved!", self.Fore.GREEN)
+                
             except:
                 self.print_color("⚠️ Invalid configuration, using defaults", self.Fore.YELLOW)
+        
+        elif config_choice == '7':
+            self.show_analytics_menu()
+            return self.start_trading()  # Return to main menu
         
         self.cycle_count = 0
         while True:
             try:
                 self.cycle_count += 1
-                self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} (3% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
-                self.print_color("=" * 60, self.Fore.CYAN)
+                self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} ({self.percent_increment}% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
+                self.print_color("=" * 70, self.Fore.CYAN)
                 self.run_trading_cycle()
                 self.print_color(f"⏳ Next analysis in 3 minutes...", self.Fore.BLUE)
                 time.sleep(self.monitoring_interval)
@@ -1546,13 +2026,14 @@ Return JSON:
                 self.print_color(f"\n🛑 TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
                 self.show_trade_history(15)
                 self.show_trading_stats()
+                self.show_analytics_menu()
                 break
             except Exception as e:
                 self.print_color(f"Main loop error: {e}", self.Fore.RED)
                 time.sleep(self.monitoring_interval)
 
 
-# ==================== PAPER TRADING CLASS ====================
+# ==================== ENHANCED PAPER TRADING CLASS ====================
 class FullyAutonomous1HourPaperTrader:
     def __init__(self, real_bot):
         self.real_bot = real_bot
@@ -1561,31 +2042,42 @@ class FullyAutonomous1HourPaperTrader:
         self.Style = real_bot.Style
         self.COLORAMA_AVAILABLE = real_bot.COLORAMA_AVAILABLE
         
+        # Load paper config from main config
+        paper_config = real_bot.config.get('paper_trading', {})
+        
         # Copy 3% system settings
         self.exit_strategy_mode = "3PERCENT_AI_CHECK"
-        self.min_check_level = 6
-        self.percent_increment = 3
-        self.force_partial_at_milestones = True
-        self.time_based_check_minutes = 15
+        self.min_check_level = real_bot.min_check_level
+        self.percent_increment = real_bot.percent_increment
+        self.force_partial_at_milestones = real_bot.force_partial_at_milestones
+        self.milestone_levels = real_bot.milestone_levels
+        self.time_based_check_minutes = real_bot.time_based_check_minutes
+        self.emergency_stop = real_bot.emergency_stop
+        self.drawdown_protection = real_bot.drawdown_protection
         
         # Paper trading specific
         self.checked_3percent_levels = {}
         self.last_ai_check_time = {}
         
-        # Paper trading settings
+        # Paper trading settings from config
         self.monitoring_interval = 180
-        self.paper_balance = 500
-        self.available_budget = 500
+        self.paper_balance = paper_config.get('virtual_balance', 500)
+        self.available_budget = self.paper_balance
         self.paper_positions = {}
         self.paper_history_file = "fully_autonomous_1hour_paper_trading_history.json"
         self.paper_history = self.load_paper_history()
         self.available_pairs = ["SOLUSDT", "XRPUSDT", "AVAXUSDT", "LTCUSDT", "HYPEUSDT"]
-        self.max_concurrent_trades = 6
+        self.max_concurrent_trades = paper_config.get('max_positions', 6)
         
-        self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER V6.0 INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
+        # Analytics for paper trading
+        self.paper_analytics_file = "paper_trading_analytics.json"
+        self.paper_analytics = self.load_paper_analytics()
+        
+        self.real_bot.print_color("🤖 ENHANCED PAPER TRADER V6.0 INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Virtual Budget: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
+        self.real_bot.print_color(f"⚙️ All features from real trading available!", self.Fore.BLUE)
     
     def load_paper_history(self):
         """Load paper trading history"""
@@ -1598,6 +2090,17 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"Error loading paper trade history: {e}", self.Fore.RED)
             return []
     
+    def load_paper_analytics(self):
+        """Load paper trading analytics"""
+        try:
+            if os.path.exists(self.paper_analytics_file):
+                with open(self.paper_analytics_file, 'r') as f:
+                    return json.load(f)
+            return {"level_decisions": [], "trade_history": []}
+        except Exception as e:
+            self.real_bot.print_color(f"Error loading paper analytics: {e}", self.Fore.YELLOW)
+            return {"level_decisions": [], "trade_history": []}
+    
     def save_paper_history(self):
         """Save paper trading history"""
         try:
@@ -1605,6 +2108,14 @@ class FullyAutonomous1HourPaperTrader:
                 json.dump(self.paper_history, f, indent=2)
         except Exception as e:
             self.real_bot.print_color(f"Error saving paper trade history: {e}", self.Fore.RED)
+    
+    def save_paper_analytics(self):
+        """Save paper trading analytics"""
+        try:
+            with open(self.paper_analytics_file, 'w') as f:
+                json.dump(self.paper_analytics, f, indent=2)
+        except Exception as e:
+            self.real_bot.print_color(f"Error saving paper analytics: {e}", self.Fore.YELLOW)
     
     def add_paper_trade_to_history(self, trade_data):
         """Add trade to paper trading history"""
@@ -1639,6 +2150,19 @@ class FullyAutonomous1HourPaperTrader:
             if len(self.paper_history) > 200:
                 self.paper_history = self.paper_history[-200:]
             self.save_paper_history()
+            
+            # Log to paper analytics
+            if 'level_decisions' not in self.paper_analytics:
+                self.paper_analytics['level_decisions'] = []
+            
+            self.paper_analytics['trade_history'].append({
+                'timestamp': datetime.now().isoformat(),
+                'pair': trade_data['pair'],
+                'pnl': trade_data.get('pnl', 0),
+                'partial_percent': trade_data.get('partial_percent', 100)
+            })
+            
+            self.save_paper_analytics()
             
             # Log for ML
             try:
@@ -1695,9 +2219,27 @@ class FullyAutonomous1HourPaperTrader:
             # Add to checked levels
             self.checked_3percent_levels[pair].append(current_level)
             
-            # Get AI decision at this level
+            # Get AI decision at this level (using robust error handling)
             market_data = self.real_bot.get_price_history(pair)
-            ai_decision = self.real_bot.get_ai_exit_decision_at_level(pair, trade, market_data, current_level, current_pnl)
+            ai_decision = self.real_bot.robust_ai_exit_decision(pair, trade, market_data, current_level)
+            
+            # Log to paper analytics
+            if 'level_decisions' not in self.paper_analytics:
+                self.paper_analytics['level_decisions'] = []
+            
+            self.paper_analytics['level_decisions'].append({
+                'timestamp': datetime.now().isoformat(),
+                'pair': pair,
+                'level': current_level,
+                'ai_decision': ai_decision.get("action", "UNKNOWN"),
+                'partial_percent': ai_decision.get("partial_percent", 0),
+                'confidence': ai_decision.get("confidence", 0)
+            })
+            
+            if len(self.paper_analytics['level_decisions']) > 1000:
+                self.paper_analytics['level_decisions'] = self.paper_analytics['level_decisions'][-1000:]
+            
+            self.save_paper_analytics()
             
             return ai_decision
         
@@ -1711,9 +2253,7 @@ class FullyAutonomous1HourPaperTrader:
         if not self.force_partial_at_milestones:
             return {"should_close": False}
         
-        milestone_levels = [10, 15, 20, 25, 30]
-        
-        for milestone in milestone_levels:
+        for milestone in self.milestone_levels:
             if current_pnl >= milestone and current_pnl < milestone + 1:
                 milestone_key = f"{pair}_milestone_{milestone}"
                 if milestone_key not in trade:
@@ -1754,29 +2294,33 @@ class FullyAutonomous1HourPaperTrader:
         
         drawdown = peak - current_pnl
         
-        if drawdown >= 6:
+        dd6 = self.drawdown_protection.get("from_peak_6", 6)
+        dd4 = self.drawdown_protection.get("from_peak_4", 4)
+        dd2 = self.drawdown_protection.get("from_peak_2", 2)
+        
+        if drawdown >= dd6:
             return {
                 "should_close": True,
                 "partial_percent": 100,
-                "close_type": "PAPER_PEAK_DRAWDOWN_6",
+                "close_type": f"PAPER_PEAK_DRAWDOWN_{dd6}",
                 "reasoning": f"🚨 PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 90
             }
         
-        elif drawdown >= 4:
+        elif drawdown >= dd4:
             return {
                 "should_close": True,
                 "partial_percent": 50,
-                "close_type": "PAPER_PEAK_DRAWDOWN_4",
+                "close_type": f"PAPER_PEAK_DRAWDOWN_{dd4}",
                 "reasoning": f"⚠️ PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 80
             }
         
-        elif drawdown >= 2 and peak >= 15:
+        elif drawdown >= dd2 and peak >= 15:
             return {
                 "should_close": True,
                 "partial_percent": 30,
-                "close_type": "PAPER_PEAK_DRAWDOWN_2",
+                "close_type": f"PAPER_PEAK_DRAWDOWN_{dd2}",
                 "reasoning": f"PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 75
             }
@@ -1788,12 +2332,12 @@ class FullyAutonomous1HourPaperTrader:
         
         # Check emergency stops
         current_pnl = self.calculate_current_pnl(trade, self.real_bot.get_current_price(pair))
-        if current_pnl <= -5.0:
+        if current_pnl <= self.emergency_stop:
             return {
                 "should_close": True,
                 "partial_percent": 100,
-                "close_type": "PAPER_EMERGENCY_STOP_5",
-                "reasoning": f"🚨 PAPER Emergency stop at -{abs(current_pnl):.1f}%",
+                "close_type": f"PAPER_EMERGENCY_STOP_{abs(self.emergency_stop)}",
+                "reasoning": f"🚨 PAPER Emergency stop at {current_pnl:.1f}%",
                 "confidence": 100
             }
         
@@ -1888,6 +2432,10 @@ class FullyAutonomous1HourPaperTrader:
                 if pair in self.paper_positions:
                     del self.paper_positions[pair]
                 
+                # Clean up checked levels
+                if pair in self.checked_3percent_levels:
+                    del self.checked_3percent_levels[pair]
+                
                 return True
                 
         except Exception as e:
@@ -1913,7 +2461,7 @@ class FullyAutonomous1HourPaperTrader:
                 return False
             
             if len(self.paper_positions) >= self.max_concurrent_trades:
-                self.real_bot.print_color(f"🚫 PAPER: Cannot open {pair}: Max concurrent trades reached (6)", self.Fore.RED)
+                self.real_bot.print_color(f"🚫 PAPER: Cannot open {pair}: Max concurrent trades reached ({self.max_concurrent_trades})", self.Fore.RED)
                 return False
                 
             if position_size_usd > self.available_budget:
@@ -1927,14 +2475,14 @@ class FullyAutonomous1HourPaperTrader:
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if decision == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if decision == 'LONG' else "🔴 SHORT"
             
-            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION (3% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION ({self.percent_increment}% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
             self.real_bot.print_color("=" * 80, self.Fore.CYAN)
             self.real_bot.print_color(f"{direction_icon} {pair}", direction_color)
             self.real_bot.print_color(f"POSITION SIZE: ${position_size_usd:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
             self.real_bot.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
             self.real_bot.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
             self.real_bot.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-            self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+            self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
             self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
@@ -1977,7 +2525,7 @@ class FullyAutonomous1HourPaperTrader:
                 if trade['status'] != 'ACTIVE':
                     continue
                 
-                self.real_bot.print_color(f"🔍 PAPER 3% System Checking {pair}...", self.Fore.BLUE)
+                self.real_bot.print_color(f"🔍 PAPER {self.percent_increment}% System Checking {pair}...", self.Fore.BLUE)
                 
                 # Get exit decision
                 exit_decision = self.paper_get_3percent_exit_decision(pair, trade)
@@ -1988,7 +2536,7 @@ class FullyAutonomous1HourPaperTrader:
                     partial_percent = exit_decision.get("partial_percent", 100)
                     confidence = exit_decision.get("confidence", 0)
                     
-                    self.real_bot.print_color(f"🎯 PAPER 3% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
+                    self.real_bot.print_color(f"🎯 PAPER {self.percent_increment}% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
                     self.real_bot.print_color(f"   Action: {'PARTIAL' if partial_percent < 100 else 'FULL'} CLOSE", self.Fore.YELLOW)
                     self.real_bot.print_color(f"   Type: {close_type}", self.Fore.MAGENTA)
                     self.real_bot.print_color(f"   Confidence: {confidence}%", self.Fore.GREEN if confidence > 70 else self.Fore.YELLOW)
@@ -1997,10 +2545,6 @@ class FullyAutonomous1HourPaperTrader:
                     success = self.paper_close_trade_immediately(pair, trade, f"PAPER_{close_type}: {reasoning}", partial_percent)
                     if success and partial_percent == 100:
                         closed_positions.append(pair)
-                        
-                        # Clean up
-                        if pair in self.checked_3percent_levels:
-                            del self.checked_3percent_levels[pair]
             
             return closed_positions
                     
@@ -2012,10 +2556,10 @@ class FullyAutonomous1HourPaperTrader:
         """Display paper trading dashboard"""
         self.real_bot.print_color(f"\n🤖 PAPER TRADING DASHBOARD - {self.real_bot.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
-        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
-        self.real_bot.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+3}%, {self.min_check_level+6}%, etc.", self.Fore.MAGENTA)
+        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.real_bot.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
-        self.real_bot.print_color(f"💰 Milestone Partials: 10%, 15%, 20%, etc.", self.Fore.GREEN)
+        self.real_bot.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
         
         active_count = 0
         total_unrealized = 0
@@ -2047,8 +2591,9 @@ class FullyAutonomous1HourPaperTrader:
                 
                 if 'peak_pnl' in trade:
                     peak = trade['peak_pnl']
-                    self.real_bot.print_color(f"   🏔️ Peak: {peak:.1f}% | Drawdown: {max(0, peak - current_pnl):.1f}%", 
-                                           self.Fore.YELLOW if peak - current_pnl <= 2 else self.Fore.RED)
+                    drawdown = max(0, peak - current_pnl)
+                    drawdown_color = self.Fore.YELLOW if drawdown <= 2 else self.Fore.RED
+                    self.real_bot.print_color(f"   🏔️ Peak: {peak:.1f}% | Drawdown: {drawdown:.1f}%", drawdown_color)
                 
                 self.real_bot.print_color("   " + "-" * 60, self.Fore.CYAN)
         
@@ -2113,6 +2658,38 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color(f"Total Paper P&L: ${total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
         self.real_bot.print_color(f"Average P&L per Paper Trade: ${avg_trade:.2f}", self.Fore.WHITE)
     
+    def show_paper_analytics(self):
+        """Show paper trading analytics"""
+        if 'level_decisions' not in self.paper_analytics or not self.paper_analytics['level_decisions']:
+            self.real_bot.print_color("No paper analytics data available yet.", self.Fore.YELLOW)
+            return
+        
+        level_stats = {}
+        for entry in self.paper_analytics['level_decisions']:
+            level = entry['level']
+            if level not in level_stats:
+                level_stats[level] = {
+                    "count": 0,
+                    "decisions": {"HOLD_NEXT_LEVEL": 0, "TAKE_PARTIAL": 0, "CLOSE_FULL": 0}
+                }
+            
+            level_stats[level]["count"] += 1
+            level_stats[level]["decisions"][entry['ai_decision']] += 1
+        
+        self.real_bot.print_color("\n📊 PAPER 3% LEVEL ANALYTICS", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("=" * 80, self.Fore.CYAN)
+        
+        print(f"{'Level':<10} {'Count':<8} {'HOLD':<8} {'PARTIAL':<10} {'FULL':<8}")
+        print("-" * 80)
+        
+        for level in sorted(level_stats.keys()):
+            s = level_stats[level]
+            if s["count"] >= 1:
+                print(f"+{level}%:    {s['count']:<8} "
+                      f"{s['decisions'].get('HOLD_NEXT_LEVEL', 0):<8} "
+                      f"{s['decisions'].get('TAKE_PARTIAL', 0):<10} "
+                      f"{s['decisions'].get('CLOSE_FULL', 0):<8}")
+    
     def run_paper_trading_cycle(self):
         """Run paper trading cycle"""
         try:
@@ -2122,6 +2699,10 @@ class FullyAutonomous1HourPaperTrader:
             if hasattr(self, 'paper_cycle_count') and self.paper_cycle_count % 4 == 0:
                 self.show_paper_history(8)
                 self.show_paper_stats()
+                
+                # Show analytics every 8 cycles
+                if self.paper_cycle_count % 8 == 0:
+                    self.show_paper_analytics()
             
             self.real_bot.print_color(f"\nPAPER: DEEPSEEK SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
             
@@ -2151,21 +2732,34 @@ class FullyAutonomous1HourPaperTrader:
     
     def start_paper_trading(self):
         """Start paper trading"""
-        self.real_bot.print_color("🚀 STARTING PAPER TRADING V6.0 WITH 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("🚀 STARTING ENHANCED PAPER TRADING V6.0 WITH 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("💰 VIRTUAL $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY 3% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
         self.real_bot.print_color(f"⏰ Time checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
+        self.real_bot.print_color(f"⚙️ All features: Configuration, Analytics, Auto-calibration", self.Fore.BLUE)
         
         # Configuration for paper trading
-        print("\n" + "="*60)
-        print("PAPER 3% AI Check Configuration:")
+        print("\n" + "="*70)
+        print("ENHANCED PAPER TRADING CONFIGURATION:")
         print(f"1. Start checking at: {self.min_check_level}%")
         print(f"2. Check every: {self.percent_increment}%")
         print(f"3. Time checks every: {self.time_based_check_minutes} minutes")
+        print(f"4. Emergency stop at: {self.emergency_stop}%")
+        print(f"5. View Paper Analytics")
+        print(f"6. Back to Main Menu")
         
-        config_choice = input("\nConfigure paper settings? (y/N): ").strip().lower()
-        if config_choice == 'y':
+        config_choice = input("\nSelect option (1-6): ").strip()
+        
+        if config_choice == "5":
+            self.show_paper_analytics()
+            input("\nPress Enter to continue...")
+            return self.start_paper_trading()
+        
+        elif config_choice == "6":
+            return
+        
+        elif config_choice.lower() == 'y' or config_choice == "1":
             try:
                 min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
                 if min_level:
@@ -2179,6 +2773,10 @@ class FullyAutonomous1HourPaperTrader:
                 if time_check:
                     self.time_based_check_minutes = int(time_check)
                 
+                emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
+                if emergency:
+                    self.emergency_stop = int(emergency)
+                
                 self.real_bot.print_color("✅ PAPER Configuration updated!", self.Fore.GREEN)
             except:
                 self.real_bot.print_color("⚠️ Invalid configuration, using defaults", self.Fore.YELLOW)
@@ -2187,7 +2785,7 @@ class FullyAutonomous1HourPaperTrader:
         while True:
             try:
                 self.paper_cycle_count += 1
-                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} (3% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} ({self.percent_increment}% AI CHECK)", self.Fore.CYAN + self.Style.BRIGHT)
                 self.real_bot.print_color("=" * 60, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
                 self.real_bot.print_color(f"⏳ Next paper analysis in 3 minutes...", self.Fore.BLUE)
@@ -2197,6 +2795,7 @@ class FullyAutonomous1HourPaperTrader:
                 self.real_bot.print_color(f"\n🛑 PAPER TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
                 self.show_paper_history(15)
                 self.show_paper_stats()
+                self.show_paper_analytics()
                 break
             except Exception as e:
                 self.real_bot.print_color(f"PAPER: Main loop error: {e}", self.Fore.RED)
@@ -2209,14 +2808,25 @@ if __name__ == "__main__":
         bot = FullyAutonomous1HourAITrader()
         
         print("\n" + "="*70)
-        print("🤖 FULLY AUTONOMOUS 1-HOUR AI TRADER V6.0")
-        print("EVERY 3% AI CHECK SYSTEM")
+        print("🤖 ENHANCED FULLY AUTONOMOUS AI TRADER V6.0")
+        print("EVERY 3% AI CHECK SYSTEM WITH ALL FEATURES")
         print("="*70)
         print("1. 🎯 REAL TRADING (Live Binance Account)")
+        print("   - Configuration File")
+        print("   - Better Error Handling")
+        print("   - Performance Analytics")
+        print("   - Auto-calibration")
+        print("   - Smart Fallbacks")
+        print("")
         print("2. 📝 PAPER TRADING (Virtual Simulation)")
-        print("3. ❌ EXIT")
+        print("   - All features from real trading")
+        print("   - Separate analytics")
+        print("   - Risk-free testing")
+        print("")
+        print("3. 🔧 VIEW ANALYTICS & CONFIG")
+        print("4. ❌ EXIT")
         
-        choice = input("\nSelect mode (1-3): ").strip()
+        choice = input("\nSelect mode (1-4): ").strip()
         
         if choice == "1":
             if bot.binance:
@@ -2231,6 +2841,9 @@ if __name__ == "__main__":
             paper_bot.start_paper_trading()
             
         elif choice == "3":
+            bot.show_analytics_menu()
+            
+        elif choice == "4":
             print(f"\n👋 Exiting...")
             
         else:
