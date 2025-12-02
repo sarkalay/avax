@@ -1575,7 +1575,7 @@ Return JSON:
             self.print_color(f"Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
                              f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
 
-            return True
+                return True
 
         # ==================== FULL CLOSE ====================
         else:
