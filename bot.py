@@ -1514,103 +1514,103 @@ Return JSON:
     
     def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
         """Close trade immediately at market price - FIXED FOR CORRECT PARTIAL CALCULATION"""
-    try:
-        current_price = self.get_current_price(pair)
-        
-        # === CORRECT PARTIAL CLOSE CALCULATION (NOTIONAL BASED) ===
-        notional_value = trade['position_size_usd'] * trade['leverage']          # Total exposure in USD
-        closed_notional = notional_value * (partial_percent / 100.0)             # How much notional we are closing
-        closed_quantity = closed_notional / current_price                        # Actual coins/tokens closed
-        closed_position_size = closed_notional / trade['leverage']               # Actual margin released
+        try:
+            current_price = self.get_current_price(pair)
+            
+            # === CORRECT PARTIAL CLOSE CALCULATION (NOTIONAL BASED) ===
+            notional_value = trade['position_size_usd'] * trade['leverage']          # Total exposure in USD
+            closed_notional = notional_value * (partial_percent / 100.0)             # How much notional we are closing
+            closed_quantity = closed_notional / current_price                        # Actual coins/tokens closed
+            closed_position_size = closed_notional / trade['leverage']               # Actual margin released
 
-        # Precision rounding (Binance standard)
-        closed_quantity = round(closed_quantity, 6)
-        closed_position_size = round(closed_position_size, 3)
+            # Precision rounding (Binance standard)
+            closed_quantity = round(closed_quantity, 6)
+            closed_position_size = round(closed_position_size, 3)
 
-        # Remaining amounts
-        remaining_quantity = trade['quantity'] - closed_quantity
-        remaining_position_size = trade['position_size_usd'] - closed_position_size
+            # Remaining amounts
+            remaining_quantity = trade['quantity'] - closed_quantity
+            remaining_position_size = trade['position_size_usd'] - closed_position_size
 
-        # Update main trade dict with remaining values
-        trade['quantity'] = round(remaining_quantity, 6)
-        trade['position_size_usd'] = round(remaining_position_size, 3)
+            # Update main trade dict with remaining values
+            trade['quantity'] = round(remaining_quantity, 6)
+            trade['position_size_usd'] = round(remaining_position_size, 3)
 
-        # P&L calculation (always correct because it's based on actual closed quantity)
-        if trade['direction'] == 'LONG':
-            pnl = (current_price - trade['entry_price']) * closed_quantity
-        else:
-            pnl = (trade['entry_price'] - current_price) * closed_quantity
+            # P&L calculation (always correct because it's based on actual closed quantity)
+            if trade['direction'] == 'LONG':
+                pnl = (current_price - trade['entry_price']) * closed_quantity
+            else:
+                pnl = (trade['entry_price'] - current_price) * closed_quantity
 
-        peak_pnl_pct = trade.get('peak_pnl', 0)
+            peak_pnl_pct = trade.get('peak_pnl', 0)
 
-        # ==================== PARTIAL CLOSE ====================
-        if partial_percent < 100:
-            partial_trade = trade.copy()
-            partial_trade['status'] = 'PARTIAL_CLOSE'
-            partial_trade['exit_price'] = current_price
-            partial_trade['pnl'] = round(pnl, 4)
-            partial_trade['close_reason'] = close_reason
-            partial_trade['close_time'] = self.get_thailand_time()
-            partial_trade['partial_percent'] = partial_percent
-            partial_trade['closed_quantity'] = closed_quantity
-            partial_trade['closed_position_size'] = closed_position_size
-            partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
+            # ==================== PARTIAL CLOSE ====================
+            if partial_percent < 100:
+                partial_trade = trade.copy()
+                partial_trade['status'] = 'PARTIAL_CLOSE'
+                partial_trade['exit_price'] = current_price
+                partial_trade['pnl'] = round(pnl, 4)
+                partial_trade['close_reason'] = close_reason
+                partial_trade['close_time'] = self.get_thailand_time()
+                partial_trade['partial_percent'] = partial_percent
+                partial_trade['closed_quantity'] = closed_quantity
+                partial_trade['closed_position_size'] = closed_position_size
+                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
 
-            # Return margin + profit/loss to available budget
-            self.available_budget += closed_position_size + pnl
-            self.add_trade_to_history(partial_trade)
+                # Return margin + profit/loss to available budget
+                self.available_budget += closed_position_size + pnl
+                self.add_trade_to_history(partial_trade)
 
-            # Update calibrator
-            self.calibrator.performance_history.append({
-                'pair': pair,
-                'pnl': pnl,
-                'levels_hit': self.checked_3percent_levels.get(pair, []),
-                'partial_percent': partial_percent
-            })
+                # Update calibrator
+                self.calibrator.performance_history.append({
+                    'pair': pair,
+                    'pnl': pnl,
+                    'levels_hit': self.checked_3percent_levels.get(pair, []),
+                    'partial_percent': partial_percent
+                })
 
-            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-            self.print_color(f"Partial Close | {pair} | {partial_percent}% | "
-                             f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
-                             f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
-            self.print_color(f"Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
-                             f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
+                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+                self.print_color(f"Partial Close | {pair} | {partial_percent}% | "
+                                 f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
+                                 f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
+                self.print_color(f"Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
+                                 f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
 
                 return True
 
-        # ==================== FULL CLOSE ====================
-        else:
-            trade['status'] = 'CLOSED'
-            trade['exit_price'] = current_price
-            trade['pnl'] = round(pnl, 4)
-            trade['close_reason'] = close_reason
-            trade['close_time'] = self.get_thailand_time()
-            trade['partial_percent'] = 100
-            trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
+            # ==================== FULL CLOSE ====================
+            else:
+                trade['status'] = 'CLOSED'
+                trade['exit_price'] = current_price
+                trade['pnl'] = round(pnl, 4)
+                trade['close_reason'] = close_reason
+                trade['close_time'] = self.get_thailand_time()
+                trade['partial_percent'] = 100
+                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
 
-            self.available_budget += trade['position_size_usd'] + pnl
-            self.add_trade_to_history(trade.copy())
+                self.available_budget += trade['position_size_usd'] + pnl
+                self.add_trade_to_history(trade.copy())
 
-            self.calibrator.performance_history.append({
-                'pair': pair,
-                'pnl': pnl,
-                'levels_hit': self.checked_3percent_levels.get(pair, []),
-                'partial_percent': 100
-            })
+                self.calibrator.performance_history.append({
+                    'pair': pair,
+                    'pnl': pnl,
+                    'levels_hit': self.checked_3percent_levels.get(pair, []),
+                    'partial_percent': 100
+                })
 
-            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-            self.print_color(f"Full Close | {pair} | Closed: {closed_quantity:.6f} | "
-                             f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
+                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+                self.print_color(f"Full Close | {pair} | Closed: {closed_quantity:.6f} | "
+                                 f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
 
-            if pair in self.ai_opened_trades:
-                del self.ai_opened_trades[pair]
-            if pair in self.checked_3percent_levels:
-                del self.checked_3percent_levels[pair]
+                if pair in self.ai_opened_trades:
+                    del self.ai_opened_trades[pair]
+                if pair in self.checked_3percent_levels:
+                    del self.checked_3percent_levels[pair]
 
-            return True
+                return True
 
-    except Exception as e:
-        self.print_color(f"Close failed: {e}", self.Fore.RED)
-        return False
+        except Exception as e:
+            self.print_color(f"Close failed: {e}", self.Fore.RED)
+            return False
     
     def execute_ai_trade(self, pair, ai_decision):
         """Execute trade WITHOUT TP/SL orders - AI will close manually"""
@@ -1654,7 +1654,7 @@ Return JSON:
             self.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
             self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
             self.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
-            self.print_color(f"⏰ Time checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
+            self.print_color(f"⏰ Additional checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
             self.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
             self.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
             self.print_color("=" * 80, self.Fore.CYAN)
@@ -2390,8 +2390,8 @@ class FullyAutonomous1HourPaperTrader:
         
         return {"should_close": False}
     
-        def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
-            """Close paper trade immediately - CORRECT PARTIAL LOGIC"""
+    def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
+        """Close paper trade immediately - CORRECT PARTIAL LOGIC"""
         try:
             current_price = self.real_bot.get_current_price(pair)
 
