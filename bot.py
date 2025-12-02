@@ -1513,7 +1513,7 @@ Return JSON:
         return True, "OK"
     
     def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
-    """Close trade immediately at market price - FIXED FOR CORRECT PARTIAL CALCULATION"""
+        """Close trade immediately at market price - FIXED FOR CORRECT PARTIAL CALCULATION"""
     try:
         current_price = self.get_current_price(pair)
         
