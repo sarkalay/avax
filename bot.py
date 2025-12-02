@@ -2390,99 +2390,84 @@ class FullyAutonomous1HourPaperTrader:
         
         return {"should_close": False}
     
-    def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
-        """Close paper trade immediately - FIXED FOR CORRECT PARTIAL CALCULATION"""
-    try:
-        current_price = self.real_bot.get_current_price(pair)
-        
-        # === CORRECT PARTIAL CLOSE CALCULATION (NOTIONAL BASED) ===
-        notional_value = trade['position_size_usd'] * trade['leverage']          # Total notional exposure
-        closed_notional = notional_value * (partial_percent / 100.0)             # Closing this much exposure
-        closed_quantity = closed_notional / current_price                        # Actual tokens closed
-        closed_position_size = closed_notional / trade['leverage']               # Actual margin released
+        def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
+            """Close paper trade immediately - CORRECT PARTIAL LOGIC"""
+        try:
+            current_price = self.real_bot.get_current_price(pair)
 
-        # Binance-like precision
-        closed_quantity = round(closed_quantity, 6)
-        closed_position_size = round(closed_position_size, 3)
+            notional_value = trade['position_size_usd'] * trade['leverage']
+            closed_notional = notional_value * (partial_percent / 100.0)
+            closed_quantity = closed_notional / current_price
+            closed_position_size = closed_notional / trade['leverage']
 
-        # Remaining amounts
-        remaining_quantity = trade['quantity'] - closed_quantity
-        remaining_position_size = trade['position_size_usd'] - closed_position_size
+            closed_quantity = round(closed_quantity, 6)
+            closed_position_size = round(closed_position_size, 3)
 
-        # Update main trade with remaining values
-        trade['quantity'] = round(remaining_quantity, 6)
-        trade['position_size_usd'] = round(remaining_position_size, 3)
+            remaining_quantity = trade['quantity'] - closed_quantity
+            remaining_position_size = trade['position_size_usd'] - closed_position_size
 
-        # P&L based on ACTUAL closed quantity (always accurate now)
-        if trade['direction'] == 'LONG':
-            pnl = (current_price - trade['entry_price']) * closed_quantity
-        else:
-            pnl = (trade['entry_price'] - current_price) * closed_quantity
+            trade['quantity'] = round(remaining_quantity, 6)
+            trade['position_size_usd'] = round(remaining_position_size, 3)
 
-        peak_pnl_pct = trade.get('peak_pnl', 0)
+            if trade['direction'] == 'LONG':
+                pnl = (current_price - trade['entry_price']) * closed_quantity
+            else:
+                pnl = (trade['entry_price'] - current_price) * closed_quantity
 
-        # ==================== PARTIAL CLOSE ====================
-        if partial_percent < 100:
-            partial_trade = trade.copy()
-            partial_trade['status'] = 'PARTIAL_CLOSE'
-            partial_trade['exit_price'] = current_price
-            partial_trade['pnl'] = round(pnl, 4)
-            partial_trade['close_reason'] = close_reason
-            partial_trade['close_time'] = self.real_bot.get_thailand_time()
-            partial_trade['partial_percent'] = partial_percent
-            partial_trade['closed_quantity'] = closed_quantity
-            partial_trade['closed_position_size'] = closed_position_size
-            partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
+            peak_pnl_pct = trade.get('peak_pnl', 0)
 
-            # Return margin + P&L to paper budget
-            self.available_budget += closed_position_size + pnl
-            self.add_paper_trade_to_history(partial_trade)
+            if partial_percent < 100:
+                partial_trade = trade.copy()
+                partial_trade['status'] = 'PARTIAL_CLOSE'
+                partial_trade['exit_price'] = current_price
+                partial_trade['pnl'] = round(pnl, 4)
+                partial_trade['close_reason'] = close_reason
+                partial_trade['close_time'] = self.real_bot.get_thailand_time()
+                partial_trade['partial_percent'] = partial_percent
+                partial_trade['closed_quantity'] = closed_quantity
+                partial_trade['closed_position_size'] = closed_position_size
+                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
 
-            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-            self.real_bot.print_color(
-                f"Paper Partial Close | {pair} | {partial_percent}% | "
-                f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
-                f"P&L: ${pnl:+.2f} | Reason: {close_reason}", 
-                pnl_color
-            )
-            self.real_bot.print_color(
-                f"Paper Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
-                f"(${trade['position_size_usd']:.2f} margin)", 
-                self.Fore.CYAN
-            )
+                self.available_budget += closed_position_size + pnl
+                self.add_paper_trade_to_history(partial_trade)
 
-            return True
+                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+                self.real_bot.print_color(
+                    f"Paper Partial Close | {pair} | {partial_percent}% | "
+                    f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
+                    f"P&L: ${pnl:+.2f} | {close_reason}", pnl_color)
+                self.real_bot.print_color(
+                    f"Paper Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
+                    f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
+                return True
 
-        # ==================== FULL CLOSE ====================
-        else:
-            trade['status'] = 'CLOSED'
-            trade['exit_price'] = current_price
-            trade['pnl'] = round(pnl, 4)
-            trade['close_reason'] = close_reason
-            trade['close_time'] = self.real_bot.get_thailand_time()
-            trade['partial_percent'] = 100
-            trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
+            else:
+                trade['status'] = 'CLOSED'
+                trade['exit_price'] = current_price
+                trade['pnl'] = round(pnl, 4)
+                trade['close_reason'] = close_reason
+                trade['close_time'] = self.real_bot.get_thailand_time()
+                trade['partial_percent'] = 100
+                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
 
-            self.available_budget += trade['position_size_usd'] + pnl
-            self.add_paper_trade_to_history(trade.copy())
+                self.available_budget += trade['position_size_usd'] + pnl
+                self.add_paper_trade_to_history(trade.copy())
 
-            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-            self.real_bot.print_color(
-                f"Paper Full Close | {pair} | Closed: {closed_quantity:.6f} | "
-                f"P&L: ${pnl:+.2f} | Reason: {close_reason}", 
-                pnl_color
-            )
+                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+                self.real_bot.print_color(
+                    f"Paper Full Close | {pair} | Closed: {closed_quantity:.6f} | "
+                    f"P&L: ${pnl:+.2f} | {close_reason}", pnl_color)
 
-            if pair in self.paper_positions:
-                del self.paper_positions[pair]
-            if pair in self.checked_3percent_levels:
-                del self.checked_3percent_levels[pair]
+                if pair in self.paper_positions:
+                    del self.paper_positions[pair]
+                if pair in self.checked_3percent_levels:
+                    del self.checked_3percent_levels[pair]
 
-            return True
+                return True
 
-    except Exception as e:
-        self.real_bot.print_color(f"Paper Close failed: {e}", self.Fore.RED)
-        return False
+        except Exception as e:
+            self.real_bot.print_color(f"Paper Close failed: {e}", self.Fore.RED)
+            return False
     
     def paper_execute_trade(self, pair, ai_decision):
         """Execute paper trade"""
