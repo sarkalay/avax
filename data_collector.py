@@ -115,6 +115,26 @@ def log_trade_for_ml(trade_data, market_data=None):
             if not file_exists:
                 writer.writeheader()
             writer.writerow(row)
+
+        # === MISTAKE DETECTION & LEARNING FEEDBACK (2025 Ultra Pro Edition) ===
+        if row["is_mistake"]:
+            print(f"\033[91m{'═' * 70}\033[0m")
+            print(f"‼️  MISTAKE DETECTED → AI IS LEARNING FROM THIS FAILURE!")
+            print(f"   Pair         : {row['pair']:>12}")
+            print(f"   Type         : {row['outcome_class']:>25}")
+            print(f"   Peak Profit  : +{row['peak_pnl_pct']:>6.2f}%")
+            print(f"   Final PnL    : ${row['pnl_usd']:>8.2f}")
+            print(f"   → AI has memorized this losing pattern and will avoid it in the future.")
+            print(f"\033[91m{'═' * 70}\033[0m\n")
+        else:
+            outcome = row['outcome_class']
+            icon = {
+                "GOOD_WINNER": "TROPHY",
+                "PURE_WINNER": "CHECKMARK",
+                "PURE_LOSER": "CROSS",
+                "UNKNOWN": "QUESTION MARK"
+            }.get(outcome, "DIAMOND")
+            print(f"{icon} Trade logged → {row['pair']:>10} | PnL: ${row['pnl_usd']:>7.2f} | {outcome}\n")
         
         # Success message with better formatting
         icon_map = {
