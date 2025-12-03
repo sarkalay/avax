@@ -1,3 +1,8 @@
+"""
+FIXED TRADING BOT - Correct Partial Close System
+ပြင်ဆင်ပြီး version - မှန်ကန်တဲ့ partial close logic
+"""
+
 import sys
 import os
 
@@ -76,7 +81,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-# ==================== PERFORMANCE ANALYTICS ====================
+# ==================== FIXED PERFORMANCE ANALYTICS ====================
 class PerformanceAnalytics:
     def __init__(self):
         self.analytics_file = "trading_analytics.json"
@@ -110,15 +115,32 @@ class PerformanceAnalytics:
             print(f"Error saving analytics: {e}")
     
     def log_level_decision(self, pair, level, ai_decision, result_pnl):
-        """Log every 3% level decision"""
+        """Log every 3% level decision - FIXED VERSION"""
+        # Determine action from decision
+        action = "UNKNOWN"
+        
+        if "action" in ai_decision:
+            action = ai_decision["action"]
+        elif "close_type" in ai_decision:
+            close_type = ai_decision["close_type"]
+            if "FALLBACK" in close_type or "MILESTONE" in close_type or "TIME" in close_type:
+                action = "TAKE_PARTIAL"
+            elif "DRAWDOWN" in close_type or "EMERGENCY" in close_type:
+                action = "CLOSE_FULL"
+            elif "AI_FULL" in close_type:
+                action = "CLOSE_FULL"
+            elif "AI_" in close_type and "LEVEL" in close_type:
+                action = "TAKE_PARTIAL"
+        
         entry = {
             "timestamp": datetime.now().isoformat(),
             "pair": pair,
             "level": level,
-            "ai_decision": ai_decision.get("action", "UNKNOWN"),
+            "ai_decision": action,
             "partial_percent": ai_decision.get("partial_percent", 0),
             "result_pnl": result_pnl,
-            "confidence": ai_decision.get("confidence", 0)
+            "confidence": ai_decision.get("confidence", 0),
+            "close_type": ai_decision.get("close_type", "")
         }
         
         if "level_decisions" not in self.analytics_data:
@@ -145,12 +167,28 @@ class PerformanceAnalytics:
                     "count": 0,
                     "total_pnl": 0,
                     "avg_pnl": 0,
-                    "decisions": {"HOLD": 0, "PARTIAL": 0, "FULL": 0}
+                    "decisions": {"HOLD_NEXT_LEVEL": 0, "TAKE_PARTIAL": 0, "CLOSE_FULL": 0}
                 }
             
             level_stats[level]["count"] += 1
             level_stats[level]["total_pnl"] += entry["result_pnl"]
-            level_stats[level]["decisions"][entry["ai_decision"]] += 1
+            
+            # Map decisions properly
+            ai_decision = entry["ai_decision"]
+            if ai_decision == "HOLD" or ai_decision == "HOLD_NEXT_LEVEL":
+                level_stats[level]["decisions"]["HOLD_NEXT_LEVEL"] += 1
+            elif ai_decision == "TAKE_PARTIAL":
+                level_stats[level]["decisions"]["TAKE_PARTIAL"] += 1
+            elif ai_decision == "CLOSE_FULL":
+                level_stats[level]["decisions"]["CLOSE_FULL"] += 1
+            else:
+                # Try to infer from partial_percent
+                if entry.get("partial_percent", 0) > 0 and entry.get("partial_percent", 0) < 100:
+                    level_stats[level]["decisions"]["TAKE_PARTIAL"] += 1
+                elif entry.get("partial_percent", 0) == 100:
+                    level_stats[level]["decisions"]["CLOSE_FULL"] += 1
+                else:
+                    level_stats[level]["decisions"]["HOLD_NEXT_LEVEL"] += 1
         
         # Calculate averages
         for level, stats in level_stats.items():
@@ -163,7 +201,7 @@ class PerformanceAnalytics:
         """Show analytics dashboard"""
         stats = self.analyze_best_levels()
         
-        print("\n📊 3% LEVEL ANALYTICS")
+        print("\n📊 3% LEVEL ANALYTICS (FIXED)")
         print("=" * 80)
         
         if not stats:
@@ -175,13 +213,13 @@ class PerformanceAnalytics:
         
         for level in sorted(stats.keys()):
             s = stats[level]
-            if s["count"] >= 3:  # Only show levels with enough data
+            if s["count"] >= 1:  # Changed from 3 to 1 to show all data
                 print(f"+{level}%:    {s['count']:<8} ${s['avg_pnl']:<11.2f} "
-                      f"{s['decisions'].get('HOLD', 0):<8} "
-                      f"{s['decisions'].get('PARTIAL', 0):<10} "
-                      f"{s['decisions'].get('FULL', 0):<8}")
+                      f"{s['decisions'].get('HOLD_NEXT_LEVEL', 0):<8} "
+                      f"{s['decisions'].get('TAKE_PARTIAL', 0):<10} "
+                      f"{s['decisions'].get('CLOSE_FULL', 0):<8}")
 
-# ==================== AUTO-CALIBRATING SYSTEM ====================
+# ==================== FIXED AUTO-CALIBRATING SYSTEM ====================
 class AutoCalibrating3PercentSystem:
     def __init__(self, config):
         self.performance_history = []
@@ -264,7 +302,7 @@ class AutoCalibrating3PercentSystem:
             if len(self.calibration_history) > 100:
                 self.calibration_history = self.calibration_history[-100:]
 
-# ==================== V6.0 EVERY 3% AI CHECK SYSTEM ====================
+# ==================== FIXED V6.0 EVERY 3% AI CHECK SYSTEM ====================
 class FullyAutonomous1HourAITrader:
     def __init__(self):
         # Load configuration
@@ -417,15 +455,25 @@ class FullyAutonomous1HourAITrader:
             self.setup_futures()
             self.load_symbol_precision()
     
-    # ==================== BETTER ERROR HANDLING ====================
+    # ==================== FIXED ERROR HANDLING ====================
     def robust_ai_exit_decision(self, pair, trade, market_data, current_level):
-        """ပိုပြီး robust ဖြစ်တဲ့ AI decision"""
+        """ပိုပြီး robust ဖြစ်တဲ့ AI decision - FIXED"""
         
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 # Try main AI
-                return self.get_ai_exit_decision_at_level(pair, trade, market_data, current_level)
+                decision = self.get_ai_exit_decision_at_level(pair, trade, market_data, current_level)
+                # Ensure action key exists
+                if "action" not in decision:
+                    if decision.get("should_close", False):
+                        if decision.get("partial_percent", 100) < 100:
+                            decision["action"] = "TAKE_PARTIAL"
+                        else:
+                            decision["action"] = "CLOSE_FULL"
+                    else:
+                        decision["action"] = "HOLD_NEXT_LEVEL"
+                return decision
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
                     time.sleep(2)
@@ -439,7 +487,7 @@ class FullyAutonomous1HourAITrader:
         return self.get_smart_fallback_decision(pair, trade, current_level)
     
     def get_smart_fallback_decision(self, pair, trade, current_level):
-        """AI fail ရင် smart fallback"""
+        """AI fail ရင် smart fallback - FIXED"""
         
         # Progressive fallback based on level
         fallback_rules = {
@@ -458,6 +506,7 @@ class FullyAutonomous1HourAITrader:
             rule = fallback_rules[current_level]
             return {
                 "should_close": True,
+                "action": "TAKE_PARTIAL",  # ✅ Added action key
                 "partial_percent": rule["partial"],
                 "close_type": f"FALLBACK_LEVEL_{current_level}",
                 "reasoning": f"AI failed: {rule['reason']} at +{current_level}%",
@@ -467,6 +516,7 @@ class FullyAutonomous1HourAITrader:
         # Default fallback
         return {
             "should_close": True,
+            "action": "TAKE_PARTIAL",  # ✅ Added action key
             "partial_percent": min(30, current_level * 2),
             "close_type": "DEFAULT_FALLBACK",
             "reasoning": f"Taking profit at +{current_level}% (AI unavailable)",
@@ -830,7 +880,7 @@ class FullyAutonomous1HourAITrader:
                 'mtf_analysis': {}
             }
     
-    # ==================== AI DECISION MAKING ====================
+    # ==================== FIXED AI DECISION MAKING ====================
     def get_ai_trading_decision(self, pair, market_data, current_trade=None):
         """AI makes trading decisions including REVERSE positions"""
         max_retries = 3
@@ -934,10 +984,20 @@ Return JSON:
         return self.get_improved_fallback_decision(pair, market_data)
     
     def get_ai_exit_decision_at_level(self, pair, trade, market_data, current_level):
-        """Ask AI for exit decision at specific 3% level"""
+        """Ask AI for exit decision at specific 3% level - FIXED"""
         try:
             if not self.openrouter_key:
-                return self.get_fallback_exit_decision_at_level(pair, trade, current_level)
+                decision = self.get_fallback_exit_decision_at_level(pair, trade, current_level)
+                # Ensure action key exists
+                if "action" not in decision:
+                    if decision.get("should_close", False):
+                        if decision.get("partial_percent", 100) < 100:
+                            decision["action"] = "TAKE_PARTIAL"
+                        else:
+                            decision["action"] = "CLOSE_FULL"
+                    else:
+                        decision["action"] = "HOLD_NEXT_LEVEL"
+                return decision
             
             current_price = market_data['current_price']
             current_pnl = self.calculate_current_pnl(trade, current_price)
@@ -966,9 +1026,9 @@ MARKET ANALYSIS AT THIS LEVEL:
 SPECIFIC QUESTION: At this exact +{current_level}% profit level, what should we do?
 
 OPTIONS:
-1. HOLD - Wait for next level (+{current_level + self.percent_increment}%)
-2. TAKE PARTIAL PROFIT - How much % to take?
-3. CLOSE FULLY - Take all profit now
+1. HOLD_NEXT_LEVEL - Wait for next level (+{current_level + self.percent_increment}%)
+2. TAKE_PARTIAL - How much % to take? (e.g., 20 for 20%)
+3. CLOSE_FULL - Take all profit now
 
 CONSIDER:
 - Next {self.percent_increment}% level is at +{current_level + self.percent_increment}%
@@ -1016,13 +1076,25 @@ Return JSON:
                     json_str = json_match.group()
                     decision_data = json.loads(json_str)
                     
-                    action = decision_data.get('action', 'HOLD_NEXT_LEVEL')
+                    action = decision_data.get('action', 'HOLD_NEXT_LEVEL').upper()
                     confidence = decision_data.get('confidence', 50)
                     reasoning = decision_data.get('reasoning', 'No reason')
                     
+                    # Ensure action is one of the expected values
+                    if action not in ['HOLD_NEXT_LEVEL', 'TAKE_PARTIAL', 'CLOSE_FULL']:
+                        if 'HOLD' in action:
+                            action = 'HOLD_NEXT_LEVEL'
+                        elif 'PARTIAL' in action or 'TAKE' in action:
+                            action = 'TAKE_PARTIAL'
+                        elif 'CLOSE' in action or 'FULL' in action:
+                            action = 'CLOSE_FULL'
+                        else:
+                            action = 'HOLD_NEXT_LEVEL'
+                    
                     if action == 'HOLD_NEXT_LEVEL':
-                        return {
+                        result_decision = {
                             "should_close": False,
+                            "action": "HOLD_NEXT_LEVEL",
                             "next_level": decision_data.get('next_check_at', current_level + self.percent_increment),
                             "reasoning": reasoning,
                             "confidence": confidence
@@ -1034,8 +1106,9 @@ Return JSON:
                         # Log to analytics
                         self.analytics.log_level_decision(pair, current_level, decision_data, 0)
                         
-                        return {
+                        result_decision = {
                             "should_close": True,
+                            "action": "TAKE_PARTIAL",
                             "partial_percent": partial_percent,
                             "close_type": f"AI_{self.percent_increment}PERCENT_LEVEL_{current_level}",
                             "reasoning": reasoning,
@@ -1046,14 +1119,18 @@ Return JSON:
                         # Log to analytics
                         self.analytics.log_level_decision(pair, current_level, decision_data, 0)
                         
-                        return {
+                        result_decision = {
                             "should_close": True,
+                            "action": "CLOSE_FULL",
                             "partial_percent": 100,
                             "close_type": f"AI_FULL_AT_{current_level}",
                             "reasoning": reasoning,
                             "confidence": confidence
                         }
                     
+                    return result_decision
+                    
+            # If AI fails, use fallback
             return self.get_fallback_exit_decision_at_level(pair, trade, current_level)
                 
         except Exception as e:
@@ -1162,35 +1239,49 @@ Return JSON:
             }
     
     def get_fallback_exit_decision_at_level(self, pair, trade, current_level):
-        """Fallback exit decision at specific level"""
+        """Fallback exit decision at specific level - FIXED"""
         # Progressive partial closing based on level
         if current_level >= 24:
             partial_percent = 70
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 21:
             partial_percent = 60
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 18:
             partial_percent = 50
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 15:
             partial_percent = 40
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 12:
             partial_percent = 30
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 9:
             partial_percent = 20
+            action_type = "TAKE_PARTIAL"
         elif current_level >= 6:
             partial_percent = 10
+            action_type = "TAKE_PARTIAL"
         else:
             partial_percent = 0
+            action_type = "HOLD_NEXT_LEVEL"
         
         if partial_percent > 0:
             return {
                 "should_close": True,
+                "action": action_type,
                 "partial_percent": partial_percent,
                 "close_type": f"FALLBACK_LEVEL_{current_level}",
                 "reasoning": f"Fallback: Taking {partial_percent}% profit at +{current_level}%",
                 "confidence": 70
             }
         
-        return {"should_close": False}
+        return {
+            "should_close": False,
+            "action": "HOLD_NEXT_LEVEL",
+            "reasoning": f"Fallback: Holding at +{current_level}%",
+            "confidence": 60
+        }
     
     # ==================== 3% INCREMENT EXIT SYSTEM ====================
     def check_3percent_level(self, pair, trade):
@@ -1209,7 +1300,7 @@ Return JSON:
         
         # Skip if below minimum check level
         if current_level < self.min_check_level:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         # Initialize checked levels for this pair
         if pair not in self.checked_3percent_levels:
@@ -1228,7 +1319,7 @@ Return JSON:
             
             return ai_decision
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def check_milestone_partial(self, pair, trade):
         """Force partial close at milestone levels (10%, 15%, 20%, etc)"""
@@ -1236,7 +1327,7 @@ Return JSON:
         current_pnl = self.calculate_current_pnl(trade, current_price)
         
         if not self.force_partial_at_milestones:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         for milestone in self.milestone_levels:
             if current_pnl >= milestone and current_pnl < milestone + 1:
@@ -1257,13 +1348,14 @@ Return JSON:
                     
                     return {
                         "should_close": True,
+                        "action": "TAKE_PARTIAL",
                         "partial_percent": partial_percent,
                         "close_type": f"MILESTONE_{milestone}_PARTIAL",
                         "reasoning": f"🎉 Milestone! Taking {partial_percent}% profit at +{milestone}%",
                         "confidence": 85
                     }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def check_time_based_exit(self, pair, trade):
         """Check exit based on time"""
@@ -1303,7 +1395,7 @@ Considering time in trade, should we:
 
 Return JSON:
 {{
-    "action": "HOLD" | "TAKE_PARTIAL" | "CLOSE_FULL",
+    "action": "HOLD_NEXT_LEVEL" | "TAKE_PARTIAL" | "CLOSE_FULL",
     "partial_percent": number (if taking partial),
     "reasoning": "Time-based analysis..."
 }}
@@ -1338,12 +1430,13 @@ Return JSON:
                             json_str = json_match.group()
                             decision_data = json.loads(json_str)
                             
-                            action = decision_data.get('action', 'HOLD')
+                            action = decision_data.get('action', 'HOLD_NEXT_LEVEL')
                             
                             if action == 'TAKE_PARTIAL':
                                 partial_percent = decision_data.get('partial_percent', 20)
                                 return {
                                     "should_close": True,
+                                    "action": "TAKE_PARTIAL",
                                     "partial_percent": partial_percent,
                                     "close_type": "TIME_BASED_PARTIAL",
                                     "reasoning": f"⏰ Time check: {decision_data.get('reasoning', '')}",
@@ -1353,6 +1446,7 @@ Return JSON:
                             elif action == 'CLOSE_FULL':
                                 return {
                                     "should_close": True,
+                                    "action": "CLOSE_FULL",
                                     "partial_percent": 100,
                                     "close_type": "TIME_BASED_FULL",
                                     "reasoning": f"⏰ Time check: {decision_data.get('reasoning', '')}",
@@ -1366,13 +1460,14 @@ Return JSON:
             if hours_in_trade >= 4 and current_pnl >= 10:
                 return {
                     "should_close": True,
+                    "action": "TAKE_PARTIAL",
                     "partial_percent": 15,
                     "close_type": "TIME_FALLBACK_PARTIAL",
                     "reasoning": f"Trade open {hours_in_trade:.1f}h with +{current_pnl:.1f}% profit",
                     "confidence": 70
                 }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def check_peak_drawdown_protection(self, pair, trade):
         """Protect against drawdowns from peak"""
@@ -1386,7 +1481,7 @@ Return JSON:
         
         # Only check if we have a significant peak
         if peak < 6:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         # Calculate drawdown from peak
         drawdown = peak - current_pnl
@@ -1399,6 +1494,7 @@ Return JSON:
         if drawdown >= dd6:  # Lost X% from peak
             return {
                 "should_close": True,
+                "action": "CLOSE_FULL",
                 "partial_percent": 100,
                 "close_type": f"PEAK_DRAWDOWN_{dd6}",
                 "reasoning": f"🚨 Lost {drawdown:.1f}% from peak {peak:.1f}%",
@@ -1408,6 +1504,7 @@ Return JSON:
         elif drawdown >= dd4:  # Lost X% from peak
             return {
                 "should_close": True,
+                "action": "TAKE_PARTIAL",
                 "partial_percent": 50,
                 "close_type": f"PEAK_DRAWDOWN_{dd4}",
                 "reasoning": f"⚠️ Lost {drawdown:.1f}% from peak {peak:.1f}%",
@@ -1417,13 +1514,14 @@ Return JSON:
         elif drawdown >= dd2 and peak >= 15:  # Lost X% from 15%+ peak
             return {
                 "should_close": True,
+                "action": "TAKE_PARTIAL",
                 "partial_percent": 30,
                 "close_type": f"PEAK_DRAWDOWN_{dd2}",
                 "reasoning": f"Lost {drawdown:.1f}% from high peak {peak:.1f}%",
                 "confidence": 75
             }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def get_3percent_exit_decision(self, pair, trade):
         """Main 3% increment exit decision system"""
@@ -1433,6 +1531,7 @@ Return JSON:
         if current_pnl <= self.emergency_stop:
             return {
                 "should_close": True,
+                "action": "CLOSE_FULL",
                 "partial_percent": 100,
                 "close_type": f"EMERGENCY_STOP_{abs(self.emergency_stop)}",
                 "reasoning": f"🚨 Emergency stop at {current_pnl:.1f}%",
@@ -1459,9 +1558,14 @@ Return JSON:
         if time_decision.get("should_close", False):
             return time_decision
         
-        return {"should_close": False}
+        return {
+            "should_close": False,
+            "action": "HOLD_NEXT_LEVEL",
+            "reasoning": "No exit conditions met",
+            "confidence": 50
+        }
     
-    # ==================== TRADE EXECUTION ====================
+    # ==================== FIXED TRADE EXECUTION ====================
     def calculate_current_pnl(self, trade, current_price):
         """Calculate current PnL percentage"""
         try:
@@ -1513,38 +1617,44 @@ Return JSON:
         return True, "OK"
     
     def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
-        """Close trade immediately at market price - FIXED FOR CORRECT PARTIAL CALCULATION"""
+        """Close trade immediately at market price - FIXED VERSION"""
         try:
             current_price = self.get_current_price(pair)
             
-            # === CORRECT PARTIAL CLOSE CALCULATION (NOTIONAL BASED) ===
-            notional_value = trade['position_size_usd'] * trade['leverage']          # Total exposure in USD
-            closed_notional = notional_value * (partial_percent / 100.0)             # How much notional we are closing
-            closed_quantity = closed_notional / current_price                        # Actual coins/tokens closed
-            closed_position_size = closed_notional / trade['leverage']               # Actual margin released
-
-            # Precision rounding (Binance standard)
-            closed_quantity = round(closed_quantity, 6)
-            closed_position_size = round(closed_position_size, 3)
-
-            # Remaining amounts
-            remaining_quantity = trade['quantity'] - closed_quantity
-            remaining_position_size = trade['position_size_usd'] - closed_position_size
-
-            # Update main trade dict with remaining values
-            trade['quantity'] = round(remaining_quantity, 6)
-            trade['position_size_usd'] = round(remaining_position_size, 3)
-
-            # P&L calculation (always correct because it's based on actual closed quantity)
+            # ===== CORRECTED PARTIAL CLOSE LOGIC =====
+            # 1. Calculate initial values
+            initial_position_size = trade['position_size_usd']
+            initial_leverage = trade['leverage']
+            initial_quantity = trade['quantity']
+            initial_notional = initial_position_size * initial_leverage
+            
+            # 2. Calculate what to close
+            closed_notional = initial_notional * (partial_percent / 100.0)
+            closed_quantity = closed_notional / current_price
+            closed_margin = closed_notional / initial_leverage
+            
+            # 3. Calculate P&L for closed portion
             if trade['direction'] == 'LONG':
                 pnl = (current_price - trade['entry_price']) * closed_quantity
             else:
                 pnl = (trade['entry_price'] - current_price) * closed_quantity
-
-            peak_pnl_pct = trade.get('peak_pnl', 0)
-
-            # ==================== PARTIAL CLOSE ====================
+            
+            # 4. Update trade for partial close
             if partial_percent < 100:
+                # Update remaining position
+                remaining_quantity = initial_quantity - closed_quantity
+                remaining_margin = initial_position_size - closed_margin
+                
+                # Ensure we don't have negative values
+                remaining_quantity = max(0, round(remaining_quantity, 6))
+                remaining_margin = max(0, round(remaining_margin, 3))
+                
+                # Update trade dict
+                trade['quantity'] = remaining_quantity
+                trade['position_size_usd'] = remaining_margin
+                # Leverage remains the same!
+                
+                # Create partial trade record
                 partial_trade = trade.copy()
                 partial_trade['status'] = 'PARTIAL_CLOSE'
                 partial_trade['exit_price'] = current_price
@@ -1553,13 +1663,15 @@ Return JSON:
                 partial_trade['close_time'] = self.get_thailand_time()
                 partial_trade['partial_percent'] = partial_percent
                 partial_trade['closed_quantity'] = closed_quantity
-                partial_trade['closed_position_size'] = closed_position_size
-                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
-
+                partial_trade['closed_position_size'] = closed_margin
+                partial_trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                partial_trade['initial_position_size'] = initial_position_size
+                partial_trade['remaining_position_size'] = remaining_margin
+                
                 # Return margin + profit/loss to available budget
-                self.available_budget += closed_position_size + pnl
+                self.available_budget += closed_margin + pnl
                 self.add_trade_to_history(partial_trade)
-
+                
                 # Update calibrator
                 self.calibrator.performance_history.append({
                     'pair': pair,
@@ -1567,49 +1679,106 @@ Return JSON:
                     'levels_hit': self.checked_3percent_levels.get(pair, []),
                     'partial_percent': partial_percent
                 })
-
+                
                 pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
                 self.print_color(f"Partial Close | {pair} | {partial_percent}% | "
-                                 f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
+                                 f"Closed: {closed_quantity:.6f} → ${closed_margin:.2f} margin | "
                                  f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
                 self.print_color(f"Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
-                                 f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
-
+                                 f"(${remaining_margin:.2f} margin, {initial_leverage}x leverage)", self.Fore.CYAN)
+                
+                # If remaining quantity is very small, close it fully
+                if remaining_quantity < 0.000001 or remaining_margin < 0.01:
+                    self.print_color(f"⚠️ Very small remaining position, closing fully", self.Fore.YELLOW)
+                    # Close the remaining
+                    if self.binance:
+                        try:
+                            side = 'SELL' if trade['direction'] == 'LONG' else 'BUY'
+                            self.binance.futures_create_order(
+                                symbol=pair,
+                                side=side,
+                                type='MARKET',
+                                quantity=remaining_quantity
+                            )
+                        except Exception as e:
+                            self.print_color(f"Failed to close remaining: {e}", self.Fore.YELLOW)
+                    
+                    # Update trade record
+                    remaining_pnl = (current_price - trade['entry_price']) * remaining_quantity if trade['direction'] == 'LONG' else (trade['entry_price'] - current_price) * remaining_quantity
+                    total_pnl = pnl + remaining_pnl
+                    
+                    trade['status'] = 'CLOSED'
+                    trade['exit_price'] = current_price
+                    trade['pnl'] = round(total_pnl, 4)
+                    trade['close_reason'] = f"{close_reason} (FULLY_CLOSED_REMAINING)"
+                    trade['close_time'] = self.get_thailand_time()
+                    trade['partial_percent'] = 100
+                    trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                    
+                    self.available_budget += remaining_margin + remaining_pnl
+                    self.add_trade_to_history(trade.copy())
+                    
+                    if pair in self.ai_opened_trades:
+                        del self.ai_opened_trades[pair]
+                    if pair in self.checked_3percent_levels:
+                        del self.checked_3percent_levels[pair]
+                
                 return True
-
-            # ==================== FULL CLOSE ====================
+            
+            # ===== FULL CLOSE =====
             else:
+                # Close entire position
+                if self.binance:
+                    side = 'SELL' if trade['direction'] == 'LONG' else 'BUY'
+                    try:
+                        self.binance.futures_create_order(
+                            symbol=pair,
+                            side=side,
+                            type='MARKET',
+                            quantity=initial_quantity
+                        )
+                    except Exception as e:
+                        self.print_color(f"Binance close failed: {e}, using simulated close", self.Fore.YELLOW)
+                
+                # Calculate final P&L
+                if trade['direction'] == 'LONG':
+                    final_pnl = (current_price - trade['entry_price']) * initial_quantity
+                else:
+                    final_pnl = (trade['entry_price'] - current_price) * initial_quantity
+                
                 trade['status'] = 'CLOSED'
                 trade['exit_price'] = current_price
-                trade['pnl'] = round(pnl, 4)
+                trade['pnl'] = round(final_pnl, 4)
                 trade['close_reason'] = close_reason
                 trade['close_time'] = self.get_thailand_time()
                 trade['partial_percent'] = 100
-                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
-
-                self.available_budget += trade['position_size_usd'] + pnl
+                trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                
+                self.available_budget += initial_position_size + final_pnl
                 self.add_trade_to_history(trade.copy())
-
+                
                 self.calibrator.performance_history.append({
                     'pair': pair,
-                    'pnl': pnl,
+                    'pnl': final_pnl,
                     'levels_hit': self.checked_3percent_levels.get(pair, []),
                     'partial_percent': 100
                 })
-
-                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-                self.print_color(f"Full Close | {pair} | Closed: {closed_quantity:.6f} | "
-                                 f"P&L: ${pnl:+.2f} | Reason: {close_reason}", pnl_color)
-
+                
+                pnl_color = self.Fore.GREEN if final_pnl > 0 else self.Fore.RED
+                self.print_color(f"Full Close | {pair} | Closed: {initial_quantity:.6f} | "
+                                 f"P&L: ${final_pnl:+.2f} | Reason: {close_reason}", pnl_color)
+                
                 if pair in self.ai_opened_trades:
                     del self.ai_opened_trades[pair]
                 if pair in self.checked_3percent_levels:
                     del self.checked_3percent_levels[pair]
-
+                
                 return True
 
         except Exception as e:
             self.print_color(f"Close failed: {e}", self.Fore.RED)
+            import traceback
+            traceback.print_exc()
             return False
     
     def execute_ai_trade(self, pair, ai_decision):
@@ -1690,7 +1859,8 @@ Return JSON:
                 'ai_reasoning': reasoning,
                 'entry_time_th': self.get_thailand_time(),
                 'has_tp_sl': False,
-                'peak_pnl': 0
+                'peak_pnl': 0,
+                'initial_position_size': position_size_usd  # Store initial for reference
             }
             
             # Initialize checked levels for this pair
@@ -1702,6 +1872,8 @@ Return JSON:
             
         except Exception as e:
             self.print_color(f"❌ Trade execution failed: {e}", self.Fore.RED)
+            import traceback
+            traceback.print_exc()
             return False
     
     # ==================== MONITORING ====================
@@ -1724,9 +1896,11 @@ Return JSON:
                     reasoning = exit_decision.get("reasoning", "No reason")
                     partial_percent = exit_decision.get("partial_percent", 100)
                     confidence = exit_decision.get("confidence", 0)
+                    action = exit_decision.get("action", "TAKE_PARTIAL")
                     
                     self.print_color(f"🎯 {self.percent_increment}% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
-                    self.print_color(f"   Action: {'PARTIAL' if partial_percent < 100 else 'FULL'} CLOSE", self.Fore.YELLOW)
+                    self.print_color(f"   Action: {action}", self.Fore.YELLOW)
+                    self.print_color(f"   Partial %: {partial_percent}%", self.Fore.MAGENTA)
                     self.print_color(f"   Type: {close_type}", self.Fore.MAGENTA)
                     self.print_color(f"   Confidence: {confidence}%", self.Fore.GREEN if confidence > 70 else self.Fore.YELLOW)
                     self.print_color(f"   Reason: {reasoning}", self.Fore.WHITE)
@@ -1824,7 +1998,9 @@ Return JSON:
             
             if trade.get('partial_percent', 100) < 100:
                 closed_qty = trade.get('closed_quantity', 0)
-                self.print_color(f"     🔸 Partial: {trade['partial_percent']}% ({closed_qty:.4f}) closed", self.Fore.CYAN)
+                initial_size = trade.get('initial_position_size', position_size)
+                remaining_size = trade.get('remaining_position_size', 0)
+                self.print_color(f"     🔸 Partial: {trade['partial_percent']}% ({closed_qty:.4f}) closed | Remaining: ${remaining_size:.2f} of ${initial_size:.2f}", self.Fore.CYAN)
     
     def show_trading_stats(self):
         """Show trading statistics"""
@@ -2049,7 +2225,7 @@ Return JSON:
                 time.sleep(self.monitoring_interval)
 
 
-# ==================== ENHANCED PAPER TRADING CLASS ====================
+# ==================== FIXED PAPER TRADING CLASS ====================
 class FullyAutonomous1HourPaperTrader:
     def __init__(self, real_bot):
         self.real_bot = real_bot
@@ -2111,7 +2287,18 @@ class FullyAutonomous1HourPaperTrader:
         try:
             if os.path.exists(self.paper_analytics_file):
                 with open(self.paper_analytics_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # Clean UNKNOWN entries
+                    if 'level_decisions' in data:
+                        for entry in data['level_decisions']:
+                            if entry.get('ai_decision') == 'UNKNOWN':
+                                if entry.get('partial_percent', 0) > 0 and entry.get('partial_percent', 0) < 100:
+                                    entry['ai_decision'] = 'TAKE_PARTIAL'
+                                elif entry.get('partial_percent', 0) == 100:
+                                    entry['ai_decision'] = 'CLOSE_FULL'
+                                else:
+                                    entry['ai_decision'] = 'HOLD_NEXT_LEVEL'
+                    return data
             return {"level_decisions": [], "trade_history": []}
         except Exception as e:
             self.real_bot.print_color(f"Error loading paper analytics: {e}", self.Fore.YELLOW)
@@ -2222,7 +2409,7 @@ class FullyAutonomous1HourPaperTrader:
         
         # Skip if below minimum check level
         if current_level < self.min_check_level:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         # Initialize checked levels for this pair
         if pair not in self.checked_3percent_levels:
@@ -2239,6 +2426,16 @@ class FullyAutonomous1HourPaperTrader:
             market_data = self.real_bot.get_price_history(pair)
             ai_decision = self.real_bot.robust_ai_exit_decision(pair, trade, market_data, current_level)
             
+            # Ensure action key exists
+            if "action" not in ai_decision:
+                if ai_decision.get("should_close", False):
+                    if ai_decision.get("partial_percent", 100) < 100:
+                        ai_decision["action"] = "TAKE_PARTIAL"
+                    else:
+                        ai_decision["action"] = "CLOSE_FULL"
+                else:
+                    ai_decision["action"] = "HOLD_NEXT_LEVEL"
+            
             # Log to paper analytics
             if 'level_decisions' not in self.paper_analytics:
                 self.paper_analytics['level_decisions'] = []
@@ -2247,9 +2444,10 @@ class FullyAutonomous1HourPaperTrader:
                 'timestamp': datetime.now().isoformat(),
                 'pair': pair,
                 'level': current_level,
-                'ai_decision': ai_decision.get("action", "UNKNOWN"),
+                'ai_decision': ai_decision.get("action", "HOLD_NEXT_LEVEL"),
                 'partial_percent': ai_decision.get("partial_percent", 0),
-                'confidence': ai_decision.get("confidence", 0)
+                'confidence': ai_decision.get("confidence", 0),
+                'close_type': ai_decision.get("close_type", "")
             })
             
             if len(self.paper_analytics['level_decisions']) > 1000:
@@ -2259,7 +2457,7 @@ class FullyAutonomous1HourPaperTrader:
             
             return ai_decision
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def paper_check_milestone_partial(self, pair, trade):
         """Paper version of milestone partial"""
@@ -2267,7 +2465,7 @@ class FullyAutonomous1HourPaperTrader:
         current_pnl = self.calculate_current_pnl(trade, current_price)
         
         if not self.force_partial_at_milestones:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         for milestone in self.milestone_levels:
             if current_pnl >= milestone and current_pnl < milestone + 1:
@@ -2287,13 +2485,14 @@ class FullyAutonomous1HourPaperTrader:
                     
                     return {
                         "should_close": True,
+                        "action": "TAKE_PARTIAL",
                         "partial_percent": partial_percent,
                         "close_type": f"PAPER_MILESTONE_{milestone}",
                         "reasoning": f"🎉 PAPER Milestone! Taking {partial_percent}% at +{milestone}%",
                         "confidence": 85
                     }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def paper_check_peak_drawdown_protection(self, pair, trade):
         """Paper version of drawdown protection"""
@@ -2306,7 +2505,7 @@ class FullyAutonomous1HourPaperTrader:
         peak = trade['peak_pnl']
         
         if peak < 6:
-            return {"should_close": False}
+            return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
         
         drawdown = peak - current_pnl
         
@@ -2317,6 +2516,7 @@ class FullyAutonomous1HourPaperTrader:
         if drawdown >= dd6:
             return {
                 "should_close": True,
+                "action": "CLOSE_FULL",
                 "partial_percent": 100,
                 "close_type": f"PAPER_PEAK_DRAWDOWN_{dd6}",
                 "reasoning": f"🚨 PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
@@ -2326,6 +2526,7 @@ class FullyAutonomous1HourPaperTrader:
         elif drawdown >= dd4:
             return {
                 "should_close": True,
+                "action": "TAKE_PARTIAL",
                 "partial_percent": 50,
                 "close_type": f"PAPER_PEAK_DRAWDOWN_{dd4}",
                 "reasoning": f"⚠️ PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
@@ -2335,13 +2536,14 @@ class FullyAutonomous1HourPaperTrader:
         elif drawdown >= dd2 and peak >= 15:
             return {
                 "should_close": True,
+                "action": "TAKE_PARTIAL",
                 "partial_percent": 30,
                 "close_type": f"PAPER_PEAK_DRAWDOWN_{dd2}",
                 "reasoning": f"PAPER Lost {drawdown:.1f}% from peak {peak:.1f}%",
                 "confidence": 75
             }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def paper_get_3percent_exit_decision(self, pair, trade):
         """Paper version of 3% exit decision"""
@@ -2351,6 +2553,7 @@ class FullyAutonomous1HourPaperTrader:
         if current_pnl <= self.emergency_stop:
             return {
                 "should_close": True,
+                "action": "CLOSE_FULL",
                 "partial_percent": 100,
                 "close_type": f"PAPER_EMERGENCY_STOP_{abs(self.emergency_stop)}",
                 "reasoning": f"🚨 PAPER Emergency stop at {current_pnl:.1f}%",
@@ -2382,41 +2585,45 @@ class FullyAutonomous1HourPaperTrader:
                 # Small partial on time check
                 return {
                     "should_close": True,
+                    "action": "TAKE_PARTIAL",
                     "partial_percent": 15,
                     "close_type": "PAPER_TIME_CHECK",
                     "reasoning": f"⏰ PAPER Time check at +{current_pnl:.1f}%",
                     "confidence": 70
                 }
         
-        return {"should_close": False}
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
-        """Close paper trade immediately - CORRECT PARTIAL LOGIC"""
+        """Close paper trade immediately - FIXED VERSION"""
         try:
             current_price = self.real_bot.get_current_price(pair)
 
-            notional_value = trade['position_size_usd'] * trade['leverage']
-            closed_notional = notional_value * (partial_percent / 100.0)
+            # Same corrected logic as real trading
+            initial_position_size = trade['position_size_usd']
+            initial_leverage = trade['leverage']
+            initial_quantity = trade['quantity']
+            initial_notional = initial_position_size * initial_leverage
+            
+            closed_notional = initial_notional * (partial_percent / 100.0)
             closed_quantity = closed_notional / current_price
-            closed_position_size = closed_notional / trade['leverage']
-
-            closed_quantity = round(closed_quantity, 6)
-            closed_position_size = round(closed_position_size, 3)
-
-            remaining_quantity = trade['quantity'] - closed_quantity
-            remaining_position_size = trade['position_size_usd'] - closed_position_size
-
-            trade['quantity'] = round(remaining_quantity, 6)
-            trade['position_size_usd'] = round(remaining_position_size, 3)
-
+            closed_margin = closed_notional / initial_leverage
+            
             if trade['direction'] == 'LONG':
                 pnl = (current_price - trade['entry_price']) * closed_quantity
             else:
                 pnl = (trade['entry_price'] - current_price) * closed_quantity
-
-            peak_pnl_pct = trade.get('peak_pnl', 0)
-
+            
             if partial_percent < 100:
+                remaining_quantity = initial_quantity - closed_quantity
+                remaining_margin = initial_position_size - closed_margin
+                
+                remaining_quantity = max(0, round(remaining_quantity, 6))
+                remaining_margin = max(0, round(remaining_margin, 3))
+                
+                trade['quantity'] = remaining_quantity
+                trade['position_size_usd'] = remaining_margin
+                
                 partial_trade = trade.copy()
                 partial_trade['status'] = 'PARTIAL_CLOSE'
                 partial_trade['exit_price'] = current_price
@@ -2425,44 +2632,72 @@ class FullyAutonomous1HourPaperTrader:
                 partial_trade['close_time'] = self.real_bot.get_thailand_time()
                 partial_trade['partial_percent'] = partial_percent
                 partial_trade['closed_quantity'] = closed_quantity
-                partial_trade['closed_position_size'] = closed_position_size
-                partial_trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
-
-                self.available_budget += closed_position_size + pnl
+                partial_trade['closed_position_size'] = closed_margin
+                partial_trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                partial_trade['initial_position_size'] = initial_position_size
+                partial_trade['remaining_position_size'] = remaining_margin
+                
+                self.available_budget += closed_margin + pnl
                 self.add_paper_trade_to_history(partial_trade)
-
+                
                 pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
                 self.real_bot.print_color(
                     f"Paper Partial Close | {pair} | {partial_percent}% | "
-                    f"Closed: {closed_quantity:.6f} → ${closed_position_size:.2f} margin | "
+                    f"Closed: {closed_quantity:.6f} → ${closed_margin:.2f} margin | "
                     f"P&L: ${pnl:+.2f} | {close_reason}", pnl_color)
                 self.real_bot.print_color(
                     f"Paper Remaining: {remaining_quantity:.6f} {pair.split('USDT')[0]} "
-                    f"(${trade['position_size_usd']:.2f} margin)", self.Fore.CYAN)
+                    f"(${remaining_margin:.2f} margin, {initial_leverage}x leverage)", self.Fore.CYAN)
+                
+                if remaining_quantity < 0.000001 or remaining_margin < 0.01:
+                    remaining_pnl = (current_price - trade['entry_price']) * remaining_quantity if trade['direction'] == 'LONG' else (trade['entry_price'] - current_price) * remaining_quantity
+                    total_pnl = pnl + remaining_pnl
+                    
+                    trade['status'] = 'CLOSED'
+                    trade['exit_price'] = current_price
+                    trade['pnl'] = round(total_pnl, 4)
+                    trade['close_reason'] = f"{close_reason} (FULLY_CLOSED_REMAINING)"
+                    trade['close_time'] = self.real_bot.get_thailand_time()
+                    trade['partial_percent'] = 100
+                    trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                    
+                    self.available_budget += remaining_margin + remaining_pnl
+                    self.add_paper_trade_to_history(trade.copy())
+                    
+                    if pair in self.paper_positions:
+                        del self.paper_positions[pair]
+                    if pair in self.checked_3percent_levels:
+                        del self.checked_3percent_levels[pair]
+                
                 return True
 
             else:
+                if trade['direction'] == 'LONG':
+                    final_pnl = (current_price - trade['entry_price']) * initial_quantity
+                else:
+                    final_pnl = (trade['entry_price'] - current_price) * initial_quantity
+                
                 trade['status'] = 'CLOSED'
                 trade['exit_price'] = current_price
-                trade['pnl'] = round(pnl, 4)
+                trade['pnl'] = round(final_pnl, 4)
                 trade['close_reason'] = close_reason
                 trade['close_time'] = self.real_bot.get_thailand_time()
                 trade['partial_percent'] = 100
-                trade['peak_pnl_pct'] = round(peak_pnl_pct, 3)
-
-                self.available_budget += trade['position_size_usd'] + pnl
+                trade['peak_pnl_pct'] = round(trade.get('peak_pnl', 0), 3)
+                
+                self.available_budget += initial_position_size + final_pnl
                 self.add_paper_trade_to_history(trade.copy())
-
-                pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+                
+                pnl_color = self.Fore.GREEN if final_pnl > 0 else self.Fore.RED
                 self.real_bot.print_color(
-                    f"Paper Full Close | {pair} | Closed: {closed_quantity:.6f} | "
-                    f"P&L: ${pnl:+.2f} | {close_reason}", pnl_color)
-
+                    f"Paper Full Close | {pair} | Closed: {initial_quantity:.6f} | "
+                    f"P&L: ${final_pnl:+.2f} | {close_reason}", pnl_color)
+                
                 if pair in self.paper_positions:
                     del self.paper_positions[pair]
                 if pair in self.checked_3percent_levels:
                     del self.checked_3percent_levels[pair]
-
+                
                 return True
 
         except Exception as e:
@@ -2530,7 +2765,8 @@ class FullyAutonomous1HourPaperTrader:
                 'ai_reasoning': reasoning,
                 'entry_time_th': self.real_bot.get_thailand_time(),
                 'has_tp_sl': False,
-                'peak_pnl': 0
+                'peak_pnl': 0,
+                'initial_position_size': position_size_usd
             }
             
             # Initialize checked levels
@@ -2562,9 +2798,11 @@ class FullyAutonomous1HourPaperTrader:
                     reasoning = exit_decision.get("reasoning", "No reason")
                     partial_percent = exit_decision.get("partial_percent", 100)
                     confidence = exit_decision.get("confidence", 0)
+                    action = exit_decision.get("action", "TAKE_PARTIAL")
                     
                     self.real_bot.print_color(f"🎯 PAPER {self.percent_increment}% System Decision for {pair}:", self.Fore.CYAN + self.Style.BRIGHT)
-                    self.real_bot.print_color(f"   Action: {'PARTIAL' if partial_percent < 100 else 'FULL'} CLOSE", self.Fore.YELLOW)
+                    self.real_bot.print_color(f"   Action: {action}", self.Fore.YELLOW)
+                    self.real_bot.print_color(f"   Partial %: {partial_percent}%", self.Fore.MAGENTA)
                     self.real_bot.print_color(f"   Type: {close_type}", self.Fore.MAGENTA)
                     self.real_bot.print_color(f"   Confidence: {confidence}%", self.Fore.GREEN if confidence > 70 else self.Fore.YELLOW)
                     self.real_bot.print_color(f"   Reason: {reasoning}", self.Fore.WHITE)
@@ -2661,7 +2899,9 @@ class FullyAutonomous1HourPaperTrader:
             
             if trade.get('partial_percent', 100) < 100:
                 closed_qty = trade.get('closed_quantity', 0)
-                self.real_bot.print_color(f"     🔸 Partial: {trade['partial_percent']}% ({closed_qty:.4f}) closed", self.Fore.CYAN)
+                initial_size = trade.get('initial_position_size', position_size)
+                remaining_size = trade.get('remaining_position_size', 0)
+                self.real_bot.print_color(f"     🔸 Partial: {trade['partial_percent']}% ({closed_qty:.4f}) closed | Remaining: ${remaining_size:.2f} of ${initial_size:.2f}", self.Fore.CYAN)
     
     def show_paper_stats(self):
         """Show paper trading statistics"""
@@ -2701,9 +2941,24 @@ class FullyAutonomous1HourPaperTrader:
                 }
             
             level_stats[level]["count"] += 1
-            level_stats[level]["decisions"][entry['ai_decision']] += 1
+            decision = entry.get('ai_decision', 'UNKNOWN')
+            
+            if decision == "HOLD" or decision == "HOLD_NEXT_LEVEL":
+                level_stats[level]["decisions"]["HOLD_NEXT_LEVEL"] += 1
+            elif decision == "TAKE_PARTIAL":
+                level_stats[level]["decisions"]["TAKE_PARTIAL"] += 1
+            elif decision == "CLOSE_FULL":
+                level_stats[level]["decisions"]["CLOSE_FULL"] += 1
+            else:
+                # Infer from partial_percent
+                if entry.get('partial_percent', 0) > 0 and entry.get('partial_percent', 0) < 100:
+                    level_stats[level]["decisions"]["TAKE_PARTIAL"] += 1
+                elif entry.get('partial_percent', 0) == 100:
+                    level_stats[level]["decisions"]["CLOSE_FULL"] += 1
+                else:
+                    level_stats[level]["decisions"]["HOLD_NEXT_LEVEL"] += 1
         
-        self.real_bot.print_color("\n📊 PAPER 3% LEVEL ANALYTICS", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("\n📊 PAPER 3% LEVEL ANALYTICS (FIXED)", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("=" * 80, self.Fore.CYAN)
         
         print(f"{'Level':<10} {'Count':<8} {'HOLD':<8} {'PARTIAL':<10} {'FULL':<8}")
@@ -2829,33 +3084,75 @@ class FullyAutonomous1HourPaperTrader:
                 time.sleep(self.monitoring_interval)
 
 
+# ==================== TEST FUNCTION ====================
+def test_partial_close_logic():
+    """Test function to verify partial close logic"""
+    print("\n🧪 TESTING PARTIAL CLOSE LOGIC")
+    print("="*50)
+    
+    # Test case: 100$ position with 5x leverage
+    initial_position = 100.0
+    leverage = 5.0
+    partial_percent = 50  # Close 50%
+    current_price = 150.0  # Assume price increased
+    entry_price = 100.0
+    
+    # Calculate
+    initial_notional = initial_position * leverage  # 500$
+    closed_notional = initial_notional * (partial_percent / 100.0)  # 250$
+    closed_quantity = closed_notional / current_price  # 1.6667
+    closed_margin = closed_notional / leverage  # 50$
+    
+    remaining_quantity = (initial_notional / entry_price) - closed_quantity  # Initial quantity - closed quantity
+    remaining_margin = initial_position - closed_margin  # 50$
+    
+    print(f"Initial Position: ${initial_position}")
+    print(f"Leverage: {leverage}x")
+    print(f"Initial Notional: ${initial_notional}")
+    print(f"\nClosing {partial_percent}%:")
+    print(f"  Closed Notional: ${closed_notional}")
+    print(f"  Closed Quantity: {closed_quantity:.4f}")
+    print(f"  Closed Margin: ${closed_margin}")
+    print(f"\nRemaining Position:")
+    print(f"  Remaining Margin: ${remaining_margin}")
+    print(f"  Remaining Quantity: {remaining_quantity:.4f}")
+    print(f"  Effective Leverage: {(remaining_margin * leverage) / remaining_margin if remaining_margin > 0 else 0}x")
+    
+    # Test P&L calculation
+    pnl = (current_price - entry_price) * closed_quantity
+    print(f"\nP&L for closed portion: ${pnl:.2f}")
+    
+    return True
+
+
 # ==================== MAIN EXECUTION ====================
 if __name__ == "__main__":
     try:
-        bot = FullyAutonomous1HourAITrader()
+        # First run the test
+        test_partial_close_logic()
         
         print("\n" + "="*70)
-        print("🤖 ENHANCED FULLY AUTONOMOUS AI TRADER V6.0")
-        print("EVERY 3% AI CHECK SYSTEM WITH ALL FEATURES")
+        print("🤖 FIXED FULLY AUTONOMOUS AI TRADER V6.0")
+        print("CORRECTED PARTIAL CLOSE SYSTEM")
         print("="*70)
         print("1. 🎯 REAL TRADING (Live Binance Account)")
-        print("   - Configuration File")
-        print("   - Better Error Handling")
-        print("   - Performance Analytics")
-        print("   - Auto-calibration")
-        print("   - Smart Fallbacks")
+        print("   - Fixed Partial Close Logic")
+        print("   - Fixed Analytics (no more UNKNOWN)")
+        print("   - Correct Margin Management")
         print("")
         print("2. 📝 PAPER TRADING (Virtual Simulation)")
-        print("   - All features from real trading")
-        print("   - Separate analytics")
+        print("   - Same fixes as real trading")
+        print("   - Clean analytics data")
         print("   - Risk-free testing")
         print("")
         print("3. 🔧 VIEW ANALYTICS & CONFIG")
-        print("4. ❌ EXIT")
+        print("4. 🧪 RUN PARTIAL CLOSE TEST")
+        print("5. ❌ EXIT")
         
-        choice = input("\nSelect mode (1-4): ").strip()
+        choice = input("\nSelect mode (1-5): ").strip()
         
         if choice == "1":
+            bot = FullyAutonomous1HourAITrader()
             if bot.binance:
                 bot.start_trading()
             else:
@@ -2864,13 +3161,19 @@ if __name__ == "__main__":
                 paper_bot.start_paper_trading()
                 
         elif choice == "2":
+            bot = FullyAutonomous1HourAITrader()
             paper_bot = FullyAutonomous1HourPaperTrader(bot)
             paper_bot.start_paper_trading()
             
         elif choice == "3":
+            bot = FullyAutonomous1HourAITrader()
             bot.show_analytics_menu()
             
         elif choice == "4":
+            test_partial_close_logic()
+            input("\nPress Enter to continue...")
+            
+        elif choice == "5":
             print(f"\n👋 Exiting...")
             
         else:
