@@ -2702,14 +2702,10 @@ class FullyAutonomous1HourPaperTrader:
 
             return True
 
-    except Exception as e:
-        self.real_bot.print_color(f"Paper Close Error ({pair}): {e}", self.real_bot.Fore.RED)
-        import traceback
-        traceback.print_exc()
-        return False
-
         except Exception as e:
-            self.real_bot.print_color(f"Paper Close failed: {e}", self.Fore.RED)
+            self.real_bot.print_color(f"Paper Close Error ({pair}): {e}", self.real_bot.Fore.RED)
+            import traceback
+            traceback.print_exc()
             return False
     
     def paper_execute_trade(self, pair, ai_decision):
