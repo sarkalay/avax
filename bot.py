@@ -1570,10 +1570,10 @@ Return JSON:
         if level_decision.get("should_close", False):
             if level_decision["action"] == "TAKE_PARTIAL":
                 # ကိုယ့် config အတိုင်း ရာခိုင်နှုန်း သတ်မှတ်ပေး
-            if partial_count < len(partial_percentages):
-                percent_to_close = partial_percentages[partial_count]
-            else:
-                percent_to_close = partial_percentages[-1]
+                if partial_count < len(partial_percentages):
+                    percent_to_close = partial_percentages[partial_count]
+                else:
+                    percent_to_close = partial_percentages[-1]
                 level_decision["partial_percent"] = percent_to_close
                 level_decision["close_type"] = f"AI_LEVEL_{percent_to_close}PCT"
                 level_decision["reasoning"] = f"AI decided partial at +{current_pnl:.1f}% - taking {percent_to_close}% (close #{partial_count+1})"
