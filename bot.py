@@ -1523,8 +1523,8 @@ Return JSON:
         
         return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
-        def get_3percent_exit_decision(self, pair, trade):
-            """MAIN EXIT SYSTEM - MAX 4 PARTIALS ONLY - ALL PROTECTIONS STILL ACTIVE"""
+    def get_3percent_exit_decision(self, pair, trade):
+        """MAIN EXIT SYSTEM - MAX 4 PARTIALS ONLY - ALL PROTECTIONS STILL ACTIVE"""
         
         # === 1. ဘ Partial close ဘယ်နှစ်ခါ လုပ်ပြီးပြီလဲ ရေတွက် ===
         if 'partial_close_count' not in trade:
@@ -1570,9 +1570,12 @@ Return JSON:
         if level_decision.get("should_close", False):
             if level_decision["action"] == "TAKE_PARTIAL":
                 # ကိုယ့် config အတိုင်း ရာခိုင်နှုန်း သတ်မှတ်ပေး
+            if partial_count < len(partial_percentages):
                 percent_to_close = partial_percentages[partial_count]
+            else:
+                percent_to_close = partial_percentages[-1]
                 level_decision["partial_percent"] = percent_to_close
-                level_decision["close_type"] = f"AI_LEVEL_{current_level}_{percent_to_close}PCT"
+                level_decision["close_type"] = f"AI_LEVEL_{percent_to_close}PCT"
                 level_decision["reasoning"] = f"AI decided partial at +{current_pnl:.1f}% - taking {percent_to_close}% (close #{partial_count+1})"
                 
                 # ရေတွက်တိုးပေး
@@ -2562,31 +2565,62 @@ class FullyAutonomous1HourPaperTrader:
         
         return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
-        def get_3percent_exit_decision(self, pair, trade):
-            """MAIN EXIT SYSTEM - MAX 4 PARTIALS ONLY - ALL PROTECTIONS STILL ACTIVE"""
+    def paper_check_time_based_exit(self, pair, trade):
+        """Paper version of time-based exit"""
+        current_time = time.time()
+        entry_time = trade.get('entry_time', current_time)
         
-        # === 1. ဘ Partial close ဘယ်နှစ်ခါ လုပ်ပြီးပြီလဲ ရေတွက် ===
+        # Calculate hours in trade
+        hours_in_trade = (current_time - entry_time) / 3600
+        
+        # Check every X minutes (from config)
+        last_check = self.last_ai_check_time.get(pair, 0)
+        if current_time - last_check >= (self.time_based_check_minutes * 60):
+            self.last_ai_check_time[pair] = current_time
+            
+            current_price = self.real_bot.get_current_price(pair)
+            current_pnl = self.calculate_current_pnl(trade, current_price)
+            
+            # Only check if profit > 5%
+            if current_pnl >= 5:
+                # Fallback: Small partial if trade is old and profitable
+                if hours_in_trade >= 4 and current_pnl >= 10:
+                    return {
+                        "should_close": True,
+                        "action": "TAKE_PARTIAL",
+                        "partial_percent": 15,
+                        "close_type": "PAPER_TIME_FALLBACK_PARTIAL",
+                        "reasoning": f"PAPER Trade open {hours_in_trade:.1f}h with +{current_pnl:.1f}% profit",
+                        "confidence": 70
+                    }
+        
+        return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
+    
+    def paper_get_3percent_exit_decision(self, pair, trade):
+        """Paper version of the main exit system"""
+        
+        # 1. Count partial closes
         if 'partial_close_count' not in trade:
             trade['partial_close_count'] = 0
         
         partial_count = trade['partial_close_count']
-        max_partials = self.config.get("max_partial_closes_per_trade", 4)
-        partial_percentages = self.config.get("partial_percentages", [50, 30, 15, 5])
+        max_partials = self.real_bot.config.get("max_partial_closes_per_trade", 4)
+        partial_percentages = self.real_bot.config.get("partial_percentages", [50, 30, 15, 5])
         
-        # အများဆုံး ၄ ခါ ရောက်ပြီဆိုရင် ကျန်တာ အကုန်ထွက်
+        # Maximum 4 partials reached, close remaining
         if partial_count >= max_partials:
-            trade['partial_close_count'] = max_partials  # cap it
+            trade['partial_close_count'] = max_partials
             return {
                 "should_close": True,
                 "action": "CLOSE_FULL",
                 "partial_percent": 100,
-                "close_type": "MAX_PARTIALS_REACHED",
-                "reasoning": f"Reached maximum {max_partials} partial closes - closing remaining position",
+                "close_type": "PAPER_MAX_PARTIALS_REACHED",
+                "reasoning": f"PAPER Reached maximum {max_partials} partial closes - closing remaining position",
                 "confidence": 95
             }
         
-        # === 2. Emergency stop & Drawdown protection (မဖျက်ဘူး အလုပ်လုပ်နေမယ်) ===
-        current_price = self.get_current_price(pair)
+        # 2. Emergency stop & Drawdown protection
+        current_price = self.real_bot.get_current_price(pair)
         current_pnl = self.calculate_current_pnl(trade, current_price)
         
         if current_pnl <= self.emergency_stop:
@@ -2594,41 +2628,54 @@ class FullyAutonomous1HourPaperTrader:
                 "should_close": True,
                 "action": "CLOSE_FULL",
                 "partial_percent": 100,
-                "close_type": f"EMERGENCY_STOP_{abs(self.emergency_stop)}",
-                "reasoning": f"Emergency stop triggered at {current_pnl:.1f}%",
+                "close_type": f"PAPER_EMERGENCY_STOP_{abs(self.emergency_stop)}",
+                "reasoning": f"PAPER Emergency stop triggered at {current_pnl:.1f}%",
                 "confidence": 100
             }
         
-        # Drawdown protection အကုန်လုံး အလုပ်လုပ်နေမယ်
-        drawdown_decision = self.check_peak_drawdown_protection(pair, trade)
+        # Drawdown protection
+        drawdown_decision = self.paper_check_peak_drawdown_protection(pair, trade)
         if drawdown_decision.get("should_close", False):
             return drawdown_decision
         
-        # === 3. Normal 3% AI level check ===
-        level_decision = self.check_3percent_level(pair, trade)
+        # 3. Normal 3% AI level check
+        level_decision = self.paper_check_3percent_level(pair, trade)
         if level_decision.get("should_close", False):
             if level_decision["action"] == "TAKE_PARTIAL":
-                # ကိုယ့် config အတိုင်း ရာခိုင်နှုန်း သတ်မှတ်ပေး
-                percent_to_close = partial_percentages[partial_count]
+                if partial_count < len(partial_percentages):
+                    percent_to_close = partial_percentages[partial_count]
+                else:
+                    percent_to_close = partial_percentages[-1]
                 level_decision["partial_percent"] = percent_to_close
-                level_decision["close_type"] = f"AI_LEVEL_{current_level}_{percent_to_close}PCT"
-                level_decision["reasoning"] = f"AI decided partial at +{current_pnl:.1f}% - taking {percent_to_close}% (close #{partial_count+1})"
+                level_decision["close_type"] = f"PAPER_AI_LEVEL_{percent_to_close}PCT"
+                level_decision["reasoning"] = f"PAPER AI decided partial at +{current_pnl:.1f}% - taking {percent_to_close}% (close #{partial_count+1})"
                 
-                # ရေတွက်တိုးပေး
+                # Increment counter
                 trade['partial_close_count'] += 1
             return level_decision
         
-        # === 4. Time check (3 မိနစ်တစ်ခါ မင်းလိုချင်တဲ့အတိုင်း) ===
-        time_decision = self.check_time_based_exit(pair, trade)
+        # 4. Time-based check
+        time_decision = self.paper_check_time_based_exit(pair, trade)
         if time_decision.get("should_close", False):
             if time_decision["action"] == "TAKE_PARTIAL":
                 percent_to_close = partial_percentages[partial_count]
                 time_decision["partial_percent"] = percent_to_close
-                time_decision["close_type"] = f"TIME_CHECK_{percent_to_close}PCT"
+                time_decision["close_type"] = f"PAPER_TIME_CHECK_{percent_to_close}PCT"
                 trade['partial_close_count'] += 1
             return time_decision
         
-        # ဘာမှ မဖြစ်ရင် hold
+        # 5. Milestone check
+        milestone_decision = self.paper_check_milestone_partial(pair, trade)
+        if milestone_decision.get("should_close", False):
+            if milestone_decision["action"] == "TAKE_PARTIAL":
+                if partial_count < len(partial_percentages):
+                    milestone_decision["partial_percent"] = partial_percentages[partial_count]
+                else:
+                    milestone_decision["partial_percent"] = partial_percentages[-1]
+                trade['partial_close_count'] += 1
+            return milestone_decision
+        
+        # No exit conditions met
         return {"should_close": False, "action": "HOLD_NEXT_LEVEL"}
     
     def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
