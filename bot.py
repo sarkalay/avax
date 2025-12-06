@@ -1487,9 +1487,9 @@ Return JSON:
         drawdown = peak - current_pnl
         
         # Drawdown protection rules from config
-        dd6 = self.drawdown_protection.get("from_peak_6", 6)
-        dd4 = self.drawdown_protection.get("from_peak_4", 4)
-        dd2 = self.drawdown_protection.get("from_peak_2", 2)
+        dd6 = self.drawdown_protection.get("from_peak_8", 8)
+        dd4 = self.drawdown_protection.get("from_peak_6", 6)
+        dd2 = self.drawdown_protection.get("from_peak_4", 4)
         
         if drawdown >= dd6:  # Lost X% from peak
             return {
@@ -1531,8 +1531,8 @@ Return JSON:
             trade['partial_close_count'] = 0
         
         partial_count = trade['partial_close_count']
-        max_partials = self.config.get("max_partial_closes_per_trade", 4)
-        partial_percentages = self.config.get("partial_percentages", [50, 30, 15, 5])
+        max_partials = self.config.get("max_partial_closes_per_trade", 3)
+        partial_percentages = self.config.get("partial_percentages", [50, 30, 20])
         
         # အများဆုံး ၄ ခါ ရောက်ပြီဆိုရင် ကျန်တာ အကုန်ထွက်
         if partial_count >= max_partials:
@@ -2529,9 +2529,9 @@ class FullyAutonomous1HourPaperTrader:
         
         drawdown = peak - current_pnl
         
-        dd6 = self.drawdown_protection.get("from_peak_6", 6)
-        dd4 = self.drawdown_protection.get("from_peak_4", 4)
-        dd2 = self.drawdown_protection.get("from_peak_2", 2)
+        dd6 = self.drawdown_protection.get("from_peak_8", 8)
+        dd4 = self.drawdown_protection.get("from_peak_6", 6)
+        dd2 = self.drawdown_protection.get("from_peak_4", 4)
         
         if drawdown >= dd6:
             return {
@@ -2604,8 +2604,8 @@ class FullyAutonomous1HourPaperTrader:
             trade['partial_close_count'] = 0
         
         partial_count = trade['partial_close_count']
-        max_partials = self.real_bot.config.get("max_partial_closes_per_trade", 4)
-        partial_percentages = self.real_bot.config.get("partial_percentages", [50, 30, 15, 5])
+        max_partials = self.real_bot.config.get("max_partial_closes_per_trade", 3)
+        partial_percentages = self.real_bot.config.get("partial_percentages", [50, 30, 20])
         
         # Maximum 4 partials reached, close remaining
         if partial_count >= max_partials:
