@@ -467,8 +467,8 @@ class FullyAutonomous1HourAITrader:
     def setup_futures(self):
         """Setup futures trading with error handling"""
         if not self.binance:
-        self.print_color("⚠️ Binance client not available - paper trading only", self.Fore.YELLOW)
-        return
+    self.print_color("⚠️ Binance client not available - paper trading only", self.Fore.YELLOW)
+    return
         
     try:
         self.print_color("🔄 Setting up futures trading...", self.Fore.BLUE)
