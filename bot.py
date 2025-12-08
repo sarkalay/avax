@@ -391,6 +391,8 @@ class FullyAutonomous1HourAITrader:
         self.total_budget = 500
         self.available_budget = 500
         self.max_position_size_percent = 6
+
+        self.max_concurrent_trades = 4
         
         # ✅ NEW: Minimum position size from config
         self.min_position_size = self.config.get("min_position_size", 25)  # $25 minimum
@@ -427,9 +429,9 @@ class FullyAutonomous1HourAITrader:
         
         # Drawdown protection settings
         self.drawdown_protection = self.config.get("drawdown_protection", {
+            "from_peak_8": 8,
             "from_peak_6": 6,
-            "from_peak_4": 4,
-            "from_peak_2": 2
+            "from_peak_4": 4
         })
         
         # Reverse position settings
