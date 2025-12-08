@@ -1,6 +1,6 @@
 """
 FIXED TRADING BOT - Correct Partial Close System
-ပြင်ဆင်ပြီး version - မှန်ကန်တဲ့ partial close logic
+Binance Cross Mode + $25 Min Position + Real Partial Close Fix
 """
 
 import sys
@@ -65,6 +65,8 @@ DEFAULT_CONFIG = {
     "milestone_levels": [10, 15, 20, 25, 30],
     "time_check_minutes": 15,
     "emergency_stop": -5,
+    "min_position_size": 25,  # ✅ $25 minimum position
+    "position_mode": "CROSS",  # ✅ CROSS mode
     "drawdown_protection": {
         "from_peak_6": 6,
         "from_peak_4": 4,
@@ -389,7 +391,9 @@ class FullyAutonomous1HourAITrader:
         self.total_budget = 500
         self.available_budget = 500
         self.max_position_size_percent = 6
-        self.max_concurrent_trades = 4
+        
+        # ✅ NEW: Minimum position size from config
+        self.min_position_size = self.config.get("min_position_size", 25)  # $25 minimum
         
         # AI can trade selected 3 major pairs only
         self.available_pairs = [
@@ -444,6 +448,8 @@ class FullyAutonomous1HourAITrader:
             print(f"💰 TOTAL BUDGET: ${self.total_budget}")
             print(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK")
             print(f"📊 Check starts at: {self.min_check_level}%")
+            print(f"✅ MINIMUM POSITION SIZE: ${self.min_position_size}")
+            print(f"✅ POSITION MODE: {self.config.get('position_mode', 'CROSS')}")
             print(f"⏰ Additional checks: Every {self.time_based_check_minutes} minutes")
             print(f"📈 Force partial at milestones: {'ON' if self.force_partial_at_milestones else 'OFF'}")
         except Exception as e:
@@ -454,6 +460,35 @@ class FullyAutonomous1HourAITrader:
         if self.binance:
             self.setup_futures()
             self.load_symbol_precision()
+    
+    # ==================== FIXED SETUP FUTURES ====================
+    def setup_futures(self):
+        if not self.binance:
+            return
+            
+        try:
+            # ✅ SET CROSS MODE FIRST
+            position_mode = self.config.get("position_mode", "CROSS")
+            try:
+                self.binance.futures_change_position_mode(dualSidePosition=False if position_mode == "CROSS" else True)
+                self.print_color(f"✅ Position mode set to {position_mode}", self.Fore.GREEN)
+            except Exception as e:
+                self.print_color(f"Position mode change failed: {e}", self.Fore.YELLOW)
+            
+            for pair in self.available_pairs:
+                try:
+                    # Set leverage to 5x
+                    self.binance.futures_change_leverage(symbol=pair, leverage=5)
+                    
+                    # Set cross margin mode
+                    self.binance.futures_change_margin_type(symbol=pair, marginType='CROSS')
+                    
+                except Exception as e:
+                    self.print_color(f"Setup failed for {pair}: {e}", self.Fore.YELLOW)
+            
+            self.print_color("✅ Futures setup completed! (Cross Mode + 5x Leverage)", self.Fore.GREEN + self.Style.BRIGHT)
+        except Exception as e:
+            self.print_color(f"Futures setup failed: {e}", self.Fore.RED)
     
     # ==================== FIXED ERROR HANDLING ====================
     def robust_ai_exit_decision(self, pair, trade, market_data, current_level):
@@ -651,21 +686,6 @@ class FullyAutonomous1HourAITrader:
             self.print_color(f"Binance connection failed: {e}", self.Fore.RED)
             return False
         return True
-    
-    def setup_futures(self):
-        if not self.binance:
-            return
-            
-        try:
-            for pair in self.available_pairs:
-                try:
-                    self.binance.futures_change_leverage(symbol=pair, leverage=5)
-                    self.binance.futures_change_margin_type(symbol=pair, marginType='ISOLATED')
-                except Exception as e:
-                    self.print_color(f"Leverage setup failed for {pair}: {e}", self.Fore.YELLOW)
-            self.print_color("✅ Futures setup completed!", self.Fore.GREEN + self.Style.BRIGHT)
-        except Exception as e:
-            self.print_color(f"Futures setup failed: {e}", self.Fore.RED)
     
     def load_symbol_precision(self):
         if not self.binance:
@@ -924,14 +944,15 @@ EXISTING POSITION:
 RULES:
 - Only trade if 1H and 4H trend align
 - Confirm entry with 15m crossover + volume spike
-- Position size: 5-7% of budget ($25 min)
+- MINIMUM POSITION SIZE: $25 (important!)
+- Position size: 5-7% of budget (min $25)
 - Leverage: 5-10x based on volatility
 - NO TP/SL - AI will close manually
 
 Return JSON:
 {
     "decision": "LONG" | "SHORT" | "HOLD" | "REVERSE_LONG" | "REVERSE_SHORT",
-    "position_size_usd": number,
+    "position_size_usd": number (minimum $25),
     "entry_price": number,
     "leverage": number,
     "confidence": 0-100,
@@ -948,7 +969,7 @@ Return JSON:
                 data = {
                     "model": "deepseek/deepseek-chat-v3.1",
                     "messages": [
-                        {"role": "system", "content": "You are a fully autonomous AI trader with reverse position capability."},
+                        {"role": "system", "content": "You are a fully autonomous AI trader with reverse position capability. Minimum position size is $25."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3,
@@ -1152,6 +1173,11 @@ Return JSON:
                 confidence = float(decision_data.get('confidence', 50))
                 reasoning = decision_data.get('reasoning', 'AI Analysis')
                 
+                # ✅ ENFORCE MINIMUM POSITION SIZE
+                if position_size_usd < self.min_position_size:
+                    position_size_usd = self.min_position_size
+                    self.print_color(f"⚠️ Position size increased to minimum ${self.min_position_size}", self.Fore.YELLOW)
+                
                 if leverage < 5:
                     leverage = 5
                 elif leverage > 10:
@@ -1210,7 +1236,7 @@ Return JSON:
         if bullish_signals >= 3 and bearish_signals <= 1:
             return {
                 "decision": "LONG",
-                "position_size_usd": 20,
+                "position_size_usd": max(25, self.min_position_size),  # ✅ Minimum $25
                 "entry_price": current_price,
                 "leverage": 5,
                 "confidence": 60,
@@ -1220,7 +1246,7 @@ Return JSON:
         elif bearish_signals >= 3 and bullish_signals <= 1:
             return {
                 "decision": "SHORT", 
-                "position_size_usd": 20,
+                "position_size_usd": max(25, self.min_position_size),  # ✅ Minimum $25
                 "entry_price": current_price,
                 "leverage": 5,
                 "confidence": 60,
@@ -1652,7 +1678,7 @@ Return JSON:
     
     def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", partial_percent=100):
         """
-        Close trade immediately at market price
+        ✅ FIXED: Close trade immediately at market price with REAL Binance execution
         partial_percent = 100 → full close
         partial_percent < 100 → partial close (correct & clean logic)
         """
@@ -1674,13 +1700,12 @@ Return JSON:
             close_ratio = partial_percent / 100.0
             close_ratio = min(1.0, max(0.0, close_ratio))  # clamp between 0-1
 
-            # ကာကွယ်ရန်
-
             closed_quantity = initial_quantity * close_ratio
             closed_margin   = initial_margin_usd * close_ratio
 
             # Binance precision
-            closed_quantity = round(closed_quantity, 6)
+            precision = self.quantity_precision.get(pair, 3)
+            closed_quantity = round(closed_quantity, precision)
             closed_margin   = round(closed_margin, 3)
 
             # ====================== P&L FOR CLOSED PORTION ======================
@@ -1691,48 +1716,113 @@ Return JSON:
 
             pnl = round(pnl, 4)
 
-            # ====================== EXECUTE MARKET ORDER (if connected) ======================
-            if self.binance:
+            # ====================== REAL BINANCE EXECUTION ======================
+            if self.binance and closed_quantity > 0:
                 side = 'SELL' if direction == 'LONG' else 'BUY'
                 try:
-                    self.binance.futures_create_order(
+                    # ✅ REAL ORDER SENT TO BINANCE
+                    order = self.binance.futures_create_order(
                         symbol=pair,
                         side=side,
                         type='MARKET',
                         quantity=closed_quantity,
                         reduceOnly=True
                     )
+                    self.print_color(f"✅ Binance order executed: {closed_quantity} {pair} at market", self.Fore.GREEN)
+                except BinanceAPIException as e:
+                    self.print_color(f"❌ Binance order failed: {e}", self.Fore.RED)
+                    # Try with adjusted quantity
+                    try:
+                        # Reduce quantity by 1% and retry
+                        adjusted_qty = round(closed_quantity * 0.99, precision)
+                        order = self.binance.futures_create_order(
+                            symbol=pair,
+                            side=side,
+                            type='MARKET',
+                            quantity=adjusted_qty,
+                            reduceOnly=True
+                        )
+                        closed_quantity = adjusted_qty
+                        self.print_color(f"✅ Binance order executed with adjusted quantity: {adjusted_qty}", self.Fore.GREEN)
+                    except Exception as retry_err:
+                        self.print_color(f"❌ Binance order retry failed: {retry_err}", self.Fore.RED)
+                        return False
                 except Exception as order_err:
-                    self.print_color(f"Warning: Binance order failed ({order_err}), using simulated close", self.Fore.YELLOW)
+                    self.print_color(f"❌ Binance order error: {order_err}", self.Fore.RED)
+                    return False
 
             # ====================== PARTIAL CLOSE (remaining > 0) ======================
             if partial_percent < 100 and closed_quantity < initial_quantity:
                 remaining_quantity = initial_quantity - closed_quantity
                 remaining_margin   = initial_margin_usd - closed_margin
 
-                # Dust protection
-                if remaining_quantity < 0.000001 or remaining_margin < 0.01:
-                    self.print_color(f"Dust position detected ({remaining_quantity:.8f}), forcing full close", self.Fore.YELLOW)
-                    return self.close_trade_immediately(pair, trade, close_reason + " (DUST_CLEANUP)", 100)
+                # Dust protection - if remaining is too small, close fully
+                if remaining_quantity < (0.1 ** precision) or remaining_margin < 0.01:
+                    self.print_color(f"Dust position detected, forcing full close", self.Fore.YELLOW)
+                    # Close remaining
+                    if self.binance and remaining_quantity > 0:
+                        side = 'SELL' if direction == 'LONG' else 'BUY'
+                        try:
+                            self.binance.futures_create_order(
+                                symbol=pair,
+                                side=side,
+                                type='MARKET',
+                                quantity=remaining_quantity,
+                                reduceOnly=True
+                            )
+                            remaining_quantity = 0
+                            remaining_margin = 0
+                        except:
+                            pass
+                    
+                    # Update to full close
+                    trade['quantity'] = 0
+                    trade['position_size_usd'] = 0
+                    
+                    # Calculate total P&L
+                    if direction == 'LONG':
+                        total_pnl = (current_price - entry_price) * initial_quantity
+                    else:
+                        total_pnl = (entry_price - current_price) * initial_quantity
+                    
+                    trade.update({
+                        'status': 'CLOSED',
+                        'exit_price': current_price,
+                        'pnl': total_pnl,
+                        'close_reason': close_reason + " (DUST_CLEANUP)",
+                        'close_time': self.get_thailand_time(),
+                        'partial_percent': 100
+                    })
+                    
+                    self.available_budget += initial_margin_usd + total_pnl
+                    self.add_trade_to_history(trade.copy())
+                    
+                    # Clean up
+                    self.ai_opened_trades.pop(pair, None)
+                    self.checked_3percent_levels.pop(pair, None)
+                    
+                    self.print_color(f"✅ FULL CLOSE (dust cleanup): {pair} | P&L: ${total_pnl:+.2f}", self.Fore.GREEN if total_pnl > 0 else self.Fore.RED)
+                    return True
 
-                # Update live trade
-                trade['quantity']        = remaining_quantity
+                # ✅ Update live trade with REAL remaining position
+                trade['quantity'] = remaining_quantity
                 trade['position_size_usd'] = remaining_margin
 
                 # Record partial close
                 partial_trade = trade.copy()
                 partial_trade.update({
-                    'status'             : 'PARTIAL_CLOSE',
-                    'exit_price'         : current_price,
-                    'pnl'                : pnl,
-                    'close_reason'       : close_reason,
-                    'close_time'        : self.get_thailand_time(),
-                    'partial_percent'    : partial_percent,
-                    'closed_quantity'    : closed_quantity,
+                    'status': 'PARTIAL_CLOSE',
+                    'exit_price': current_price,
+                    'pnl': pnl,
+                    'close_reason': close_reason,
+                    'close_time': self.get_thailand_time(),
+                    'partial_percent': partial_percent,
+                    'closed_quantity': closed_quantity,
                     'closed_position_size': closed_margin,
-                    'peak_pnl_pct'       : round(trade.get('peak_pnl', 0), 3),
+                    'peak_pnl_pct': round(trade.get('peak_pnl', 0), 3),
                     'initial_position_size': initial_margin_usd,
-                    'remaining_position_size': remaining_margin
+                    'remaining_position_size': remaining_margin,
+                    'binance_order_id': order.get('orderId', 'SIMULATED') if self.binance else 'SIMULATED'
                 })
 
                 self.available_budget += closed_margin + pnl
@@ -1747,7 +1837,7 @@ Return JSON:
                 })
 
                 color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-                self.print_color(f"Partial Close | {pair} | {partial_percent}% | "
+                self.print_color(f"✅ REAL Partial Close | {pair} | {partial_percent}% | "
                                  f"Closed: {closed_quantity:.6f} (${closed_margin:.2f}) | "
                                  f"P&L: ${pnl:+.2f} | {close_reason}", color)
                 self.print_color(f"Remaining: {remaining_quantity:.6f} (${remaining_margin:.2f} margin)", self.Fore.CYAN)
@@ -1766,13 +1856,14 @@ Return JSON:
 
                 # Update trade record
                 trade.update({
-                    'status'       : 'CLOSED',
-                    'exit_price'   : current_price,
-                    'pnl'          : final_pnl,
-                    'close_reason' : close_reason,
-                    'close_time'   : self.get_thailand_time(),
+                    'status': 'CLOSED',
+                    'exit_price': current_price,
+                    'pnl': final_pnl,
+                    'close_reason': close_reason,
+                    'close_time': self.get_thailand_time(),
                     'partial_percent': 100,
-                    'peak_pnl_pct' : round(trade.get('peak_pnl', 0), 3)
+                    'peak_pnl_pct': round(trade.get('peak_pnl', 0), 3),
+                    'binance_order_id': order.get('orderId', 'SIMULATED') if self.binance else 'SIMULATED'
                 })
 
                 self.available_budget += initial_margin_usd + final_pnl
@@ -1787,7 +1878,7 @@ Return JSON:
                 })
 
                 color = self.Fore.GREEN if final_pnl > 0 else self.Fore.RED
-                self.print_color(f"FULL CLOSE | {pair} | Qty: {initial_quantity:.6f} | "
+                self.print_color(f"✅ REAL FULL CLOSE | {pair} | Qty: {initial_quantity:.6f} | "
                                  f"P&L: ${final_pnl:+.2f} | {close_reason}", color)
 
                 # Clean up active trade lists
@@ -1797,7 +1888,7 @@ Return JSON:
                 return True
 
         except Exception as e:
-            self.print_color(f"Error: Close failed for {pair}: {e}", self.Fore.RED)
+            self.print_color(f"❌ Close failed for {pair}: {e}", self.Fore.RED)
             import traceback
             traceback.print_exc()
             return False
@@ -1850,20 +1941,27 @@ Return JSON:
             self.print_color("=" * 80, self.Fore.CYAN)
             
             # Execute live trade WITHOUT TP/SL orders
+            order_id = None
             if self.binance:
                 entry_side = 'BUY' if decision == 'LONG' else 'SELL'
                 
                 try:
+                    # Set leverage
                     self.binance.futures_change_leverage(symbol=pair, leverage=leverage)
+                    
+                    # Place MARKET order
+                    order = self.binance.futures_create_order(
+                        symbol=pair,
+                        side=entry_side,
+                        type='MARKET',
+                        quantity=quantity
+                    )
+                    order_id = order.get('orderId')
+                    self.print_color(f"✅ Binance order placed: {order_id}", self.Fore.GREEN)
+                    
                 except Exception as e:
-                    self.print_color(f"Leverage change failed: {e}", self.Fore.YELLOW)
-                
-                order = self.binance.futures_create_order(
-                    symbol=pair,
-                    side=entry_side,
-                    type='MARKET',
-                    quantity=quantity
-                )
+                    self.print_color(f"❌ Binance order failed: {e}", self.Fore.RED)
+                    return False
             
             self.available_budget -= position_size_usd
             
@@ -1881,7 +1979,8 @@ Return JSON:
                 'entry_time_th': self.get_thailand_time(),
                 'has_tp_sl': False,
                 'peak_pnl': 0,
-                'initial_position_size': position_size_usd  # Store initial for reference
+                'initial_position_size': position_size_usd,
+                'binance_order_id': order_id
             }
             
             # Initialize checked levels for this pair
@@ -1942,6 +2041,8 @@ Return JSON:
         self.print_color(f"\n🤖 AI TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 90, self.Fore.CYAN)
         self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"✅ MINIMUM POSITION: ${self.min_position_size}", self.Fore.GREEN)
+        self.print_color(f"✅ POSITION MODE: {self.config.get('position_mode', 'CROSS')}", self.Fore.GREEN)
         self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
         self.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
@@ -2038,6 +2139,7 @@ Return JSON:
         self.print_color(f"Total P&L: ${self.real_total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if self.real_total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
         self.print_color(f"Average P&L per Trade: ${avg_trade:.2f}", self.Fore.WHITE)
         self.print_color(f"Available Budget: ${self.available_budget:.2f}", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color(f"✅ Minimum Position Size: ${self.min_position_size}", self.Fore.GREEN)
     
     def show_analytics_menu(self):
         """Show analytics menu"""
@@ -2102,12 +2204,12 @@ Return JSON:
             
             qualified_signals = 0
             for pair in self.available_pairs:
-                if self.available_budget > 100:
+                if self.available_budget > self.min_position_size:  # ✅ Check against min position
                     market_data = self.get_price_history(pair)
                     
                     ai_decision = self.get_ai_trading_decision(pair, market_data)
                     
-                    if ai_decision["decision"] != "HOLD" and ai_decision["position_size_usd"] > 0:
+                    if ai_decision["decision"] != "HOLD" and ai_decision["position_size_usd"] >= self.min_position_size:
                         qualified_signals += 1
                         direction = ai_decision['decision']
                         leverage_info = f"Leverage: {ai_decision['leverage']}x"
@@ -2166,6 +2268,8 @@ Return JSON:
         self.print_color("🚀 STARTING AI TRADER V6.0 WITH ENHANCED 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("💰 AI MANAGING $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
         self.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"✅ MINIMUM POSITION SIZE: ${self.min_position_size}", self.Fore.GREEN + self.Style.BRIGHT)
+        self.print_color(f"✅ POSITION MODE: {self.config.get('position_mode', 'CROSS')}", self.Fore.GREEN + self.Style.BRIGHT)
         self.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
         self.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
@@ -2179,51 +2283,81 @@ Return JSON:
         print(f"3. Time checks every: {self.time_based_check_minutes} minutes")
         print(f"4. Force partial at milestones: {'ON' if self.force_partial_at_milestones else 'OFF'}")
         print(f"5. Emergency stop at: {self.emergency_stop}%")
-        print(f"6. Auto-calibration: {'ON' if self.config.get('auto_calibration', {}).get('enabled', False) else 'OFF'}")
-        print(f"7. View Analytics Dashboard")
+        print(f"6. Minimum Position Size: ${self.min_position_size}")
+        print(f"7. Position Mode: {self.config.get('position_mode', 'CROSS')}")
+        print(f"8. Auto-calibration: {'ON' if self.config.get('auto_calibration', {}).get('enabled', False) else 'OFF'}")
+        print(f"9. View Analytics Dashboard")
+        print(f"0. Start Trading")
         
-        config_choice = input("\nConfigure settings? (y/N/7): ").strip().lower()
+        config_choice = input("\nConfigure settings? (enter number or 0 to start): ").strip()
         
-        if config_choice == 'y':
+        if config_choice == "9":
+            self.show_analytics_menu()
+            return self.start_trading()  # Return to main menu
+        
+        elif config_choice != "0" and config_choice != "":
             try:
-                min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
-                if min_level:
-                    self.min_check_level = int(min_level)
-                    self.config['min_check_level'] = self.min_check_level
+                if config_choice == "1":
+                    min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
+                    if min_level:
+                        self.min_check_level = int(min_level)
+                        self.config['min_check_level'] = self.min_check_level
                 
-                increment = input(f"Check every % (default {self.percent_increment}): ").strip()
-                if increment:
-                    self.percent_increment = int(increment)
-                    self.config['percent_increment'] = self.percent_increment
+                elif config_choice == "2":
+                    increment = input(f"Check every % (default {self.percent_increment}): ").strip()
+                    if increment:
+                        self.percent_increment = int(increment)
+                        self.config['percent_increment'] = self.percent_increment
                 
-                time_check = input(f"Time checks every minutes (default {self.time_based_check_minutes}): ").strip()
-                if time_check:
-                    self.time_based_check_minutes = int(time_check)
-                    self.config['time_check_minutes'] = self.time_based_check_minutes
+                elif config_choice == "3":
+                    time_check = input(f"Time checks every minutes (default {self.time_based_check_minutes}): ").strip()
+                    if time_check:
+                        self.time_based_check_minutes = int(time_check)
+                        self.config['time_check_minutes'] = self.time_based_check_minutes
                 
-                emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
-                if emergency:
-                    self.emergency_stop = int(emergency)
-                    self.config['emergency_stop'] = self.emergency_stop
+                elif config_choice == "4":
+                    milestone = input(f"Force partial at milestones? (y/N): ").strip().lower()
+                    self.force_partial_at_milestones = (milestone == 'y')
+                    self.config['force_milestone_partials'] = self.force_partial_at_milestones
                 
-                milestone = input(f"Force partial at milestones? (y/N): ").strip().lower()
-                self.force_partial_at_milestones = (milestone == 'y')
-                self.config['force_milestone_partials'] = self.force_partial_at_milestones
+                elif config_choice == "5":
+                    emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
+                    if emergency:
+                        self.emergency_stop = int(emergency)
+                        self.config['emergency_stop'] = self.emergency_stop
                 
-                auto_cal = input(f"Enable auto-calibration? (y/N): ").strip().lower()
-                if 'auto_calibration' not in self.config:
-                    self.config['auto_calibration'] = {}
-                self.config['auto_calibration']['enabled'] = (auto_cal == 'y')
+                elif config_choice == "6":
+                    min_pos = input(f"Minimum Position Size $ (default {self.min_position_size}): ").strip()
+                    if min_pos:
+                        self.min_position_size = int(min_pos)
+                        self.config['min_position_size'] = self.min_position_size
+                
+                elif config_choice == "7":
+                    mode = input(f"Position Mode (CROSS/ISOLATED) (default {self.config.get('position_mode', 'CROSS')}): ").strip().upper()
+                    if mode in ['CROSS', 'ISOLATED']:
+                        self.config['position_mode'] = mode
+                        # Update Binance if connected
+                        if self.binance:
+                            try:
+                                self.binance.futures_change_position_mode(dualSidePosition=(mode == 'ISOLATED'))
+                                for pair in self.available_pairs:
+                                    self.binance.futures_change_margin_type(symbol=pair, marginType=mode)
+                                self.print_color(f"✅ Position mode updated to {mode}", self.Fore.GREEN)
+                            except Exception as e:
+                                self.print_color(f"Failed to update position mode: {e}", self.Fore.YELLOW)
+                
+                elif config_choice == "8":
+                    auto_cal = input(f"Enable auto-calibration? (y/N): ").strip().lower()
+                    if 'auto_calibration' not in self.config:
+                        self.config['auto_calibration'] = {}
+                    self.config['auto_calibration']['enabled'] = (auto_cal == 'y')
                 
                 self.save_config()
                 self.print_color("✅ Configuration updated and saved!", self.Fore.GREEN)
+                return self.start_trading()  # Show updated config
                 
             except:
                 self.print_color("⚠️ Invalid configuration, using defaults", self.Fore.YELLOW)
-        
-        elif config_choice == '7':
-            self.show_analytics_menu()
-            return self.start_trading()  # Return to main menu
         
         self.cycle_count = 0
         while True:
@@ -2268,6 +2402,9 @@ class FullyAutonomous1HourPaperTrader:
         self.emergency_stop = real_bot.emergency_stop
         self.drawdown_protection = real_bot.drawdown_protection
         
+        # ✅ Copy minimum position size
+        self.min_position_size = real_bot.min_position_size
+        
         # Paper trading specific
         self.checked_3percent_levels = {}
         self.last_ai_check_time = {}
@@ -2289,6 +2426,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🤖 ENHANCED PAPER TRADER V6.0 INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Virtual Budget: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"✅ MINIMUM POSITION SIZE: ${self.min_position_size}", self.Fore.GREEN)
         self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
         self.real_bot.print_color(f"⚙️ All features from real trading available!", self.Fore.BLUE)
     
@@ -2833,6 +2971,11 @@ class FullyAutonomous1HourPaperTrader:
                 self.real_bot.print_color(f"🚫 PAPER: Cannot open {pair}: Insufficient budget", self.Fore.RED)
                 return False
             
+            # ✅ ENFORCE MINIMUM POSITION SIZE
+            if position_size_usd < self.min_position_size:
+                position_size_usd = self.min_position_size
+                self.real_bot.print_color(f"⚠️ PAPER: Position size increased to minimum ${self.min_position_size}", self.Fore.YELLOW)
+            
             notional_value = position_size_usd * leverage
             quantity = notional_value / entry_price
             quantity = round(quantity, 3)
@@ -2848,6 +2991,7 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
             self.real_bot.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
             self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+            self.real_bot.print_color(f"✅ MINIMUM POSITION: ${self.min_position_size}", self.Fore.GREEN)
             self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
             self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
@@ -2925,6 +3069,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color(f"\n🤖 PAPER TRADING DASHBOARD - {self.real_bot.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
         self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"✅ MINIMUM POSITION: ${self.min_position_size}", self.Fore.GREEN)
         self.real_bot.print_color(f"📊 Check Levels: {self.min_check_level}%, {self.min_check_level+self.percent_increment}%, {self.min_check_level+(self.percent_increment*2)}%, etc.", self.Fore.MAGENTA)
         self.real_bot.print_color(f"⏰ Time Checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
         self.real_bot.print_color(f"💰 Milestone Partials: {', '.join(map(str, self.milestone_levels))}%", self.Fore.GREEN)
@@ -2972,6 +3117,7 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"📊 Active Paper Positions: {active_count}/{self.max_concurrent_trades} | Total Unrealized P&L: ${total_unrealized:.2f}", total_color)
         
         self.real_bot.print_color(f"💰 Paper Balance: ${self.paper_balance:.2f} | Available: ${self.available_budget:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color(f"✅ Minimum Position Size: ${self.min_position_size}", self.Fore.GREEN)
     
     def show_paper_history(self, limit=10):
         """Show paper trading history"""
@@ -3093,12 +3239,12 @@ class FullyAutonomous1HourPaperTrader:
             
             qualified_signals = 0
             for pair in self.available_pairs:
-                if self.available_budget > 100:
+                if self.available_budget > self.min_position_size:  # ✅ Check against min position
                     market_data = self.real_bot.get_price_history(pair)
                     
                     ai_decision = self.real_bot.get_ai_trading_decision(pair, market_data)
                     
-                    if ai_decision["decision"] != "HOLD" and ai_decision["position_size_usd"] > 0:
+                    if ai_decision["decision"] != "HOLD" and ai_decision["position_size_usd"] >= self.min_position_size:
                         qualified_signals += 1
                         direction = ai_decision['decision']
                         leverage_info = f"Leverage: {ai_decision['leverage']}x"
@@ -3120,6 +3266,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🚀 STARTING ENHANCED PAPER TRADING V6.0 WITH 3% AI CHECK SYSTEM!", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("💰 VIRTUAL $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"🎯 EXIT STRATEGY: EVERY {self.percent_increment}% AI CHECK", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"✅ MINIMUM POSITION SIZE: ${self.min_position_size}", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"📊 Check starts at: {self.min_check_level}%", self.Fore.MAGENTA)
         self.real_bot.print_color(f"⏰ Time checks: Every {self.time_based_check_minutes} minutes", self.Fore.BLUE)
         self.real_bot.print_color(f"⚙️ All features: Configuration, Analytics, Auto-calibration", self.Fore.BLUE)
@@ -3131,36 +3278,46 @@ class FullyAutonomous1HourPaperTrader:
         print(f"2. Check every: {self.percent_increment}%")
         print(f"3. Time checks every: {self.time_based_check_minutes} minutes")
         print(f"4. Emergency stop at: {self.emergency_stop}%")
-        print(f"5. View Paper Analytics")
-        print(f"6. Back to Main Menu")
+        print(f"5. Minimum Position Size: ${self.min_position_size}")
+        print(f"6. View Paper Analytics")
+        print(f"7. Back to Main Menu")
         
-        config_choice = input("\nSelect option (1-6): ").strip()
+        config_choice = input("\nSelect option (1-7): ").strip()
         
-        if config_choice == "5":
+        if config_choice == "6":
             self.show_paper_analytics()
             input("\nPress Enter to continue...")
             return self.start_paper_trading()
         
-        elif config_choice == "6":
+        elif config_choice == "7":
             return
         
-        elif config_choice.lower() == 'y' or config_choice == "1":
+        elif config_choice != "":
             try:
-                min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
-                if min_level:
-                    self.min_check_level = int(min_level)
+                if config_choice == "1":
+                    min_level = input(f"Start checking at % (default {self.min_check_level}): ").strip()
+                    if min_level:
+                        self.min_check_level = int(min_level)
                 
-                increment = input(f"Check every % (default {self.percent_increment}): ").strip()
-                if increment:
-                    self.percent_increment = int(increment)
+                elif config_choice == "2":
+                    increment = input(f"Check every % (default {self.percent_increment}): ").strip()
+                    if increment:
+                        self.percent_increment = int(increment)
                 
-                time_check = input(f"Time checks every minutes (default {self.time_based_check_minutes}): ").strip()
-                if time_check:
-                    self.time_based_check_minutes = int(time_check)
+                elif config_choice == "3":
+                    time_check = input(f"Time checks every minutes (default {self.time_based_check_minutes}): ").strip()
+                    if time_check:
+                        self.time_based_check_minutes = int(time_check)
                 
-                emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
-                if emergency:
-                    self.emergency_stop = int(emergency)
+                elif config_choice == "4":
+                    emergency = input(f"Emergency stop at % (default {self.emergency_stop}): ").strip()
+                    if emergency:
+                        self.emergency_stop = int(emergency)
+                
+                elif config_choice == "5":
+                    min_pos = input(f"Minimum Position Size $ (default {self.min_position_size}): ").strip()
+                    if min_pos:
+                        self.min_position_size = int(min_pos)
                 
                 self.real_bot.print_color("✅ PAPER Configuration updated!", self.Fore.GREEN)
             except:
@@ -3240,12 +3397,13 @@ if __name__ == "__main__":
         print("="*70)
         print("1. 🎯 REAL TRADING (Live Binance Account)")
         print("   - Fixed Partial Close Logic")
-        print("   - Fixed Analytics (no more UNKNOWN)")
-        print("   - Correct Margin Management")
+        print("   - Cross Mode Position")
+        print("   - $25 Minimum Position Size")
+        print("   - REAL Binance Execution")
         print("")
         print("2. 📝 PAPER TRADING (Virtual Simulation)")
         print("   - Same fixes as real trading")
-        print("   - Clean analytics data")
+        print("   - $25 Minimum Position")
         print("   - Risk-free testing")
         print("")
         print("3. 🔧 VIEW ANALYTICS & CONFIG")
