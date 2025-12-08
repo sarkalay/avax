@@ -467,83 +467,83 @@ class FullyAutonomous1HourAITrader:
     def setup_futures(self):
         """Setup futures trading with error handling"""
         if not self.binance:
-    self.print_color("⚠️ Binance client not available - paper trading only", self.Fore.YELLOW)
-    return
+            self.print_color("⚠️ Binance client not available - paper trading only", self.Fore.YELLOW)
+            return
         
-    try:
-        self.print_color("🔄 Setting up futures trading...", self.Fore.BLUE)
-        
-        # Get position mode from config
-        position_mode = self.config.get("position_mode", "CROSS")
-        margin_type = 'CROSS' if position_mode == "CROSS" else 'ISOLATED'
-        
-        # 1. Set position mode (Hedge/One-way)
         try:
-            # Get current position mode
-            current_mode = self.binance.futures_get_position_mode()
-            is_dual_mode = current_mode.get('dualSidePosition', False)
+            self.print_color("🔄 Setting up futures trading...", self.Fore.BLUE)
             
-            # Determine if we need to change
-            need_dual = (position_mode == "ISOLATED")
+            # Get position mode from config
+            position_mode = self.config.get("position_mode", "CROSS")
+            margin_type = 'CROSS' if position_mode == "CROSS" else 'ISOLATED'
             
-            if is_dual_mode != need_dual:
-                self.binance.futures_change_position_mode(dualSidePosition=need_dual)
-                self.print_color(f"✅ Position mode changed to {position_mode}", self.Fore.GREEN)
-            else:
-                self.print_color(f"✅ Position mode already {position_mode}", self.Fore.GREEN)
-        except Exception as e:
-            if "No need to change" in str(e):
-                self.print_color(f"✅ Position mode already set", self.Fore.GREEN)
-            else:
-                self.print_color(f"⚠️ Position mode setup: {str(e)[:100]}", self.Fore.YELLOW)
-        
-        # 2. Setup each trading pair
-        successful_setups = 0
-        for pair in self.available_pairs:
+            # 1. Set position mode (Hedge/One-way)
             try:
-                # Set leverage
-                self.binance.futures_change_leverage(symbol=pair, leverage=5)
+                # Get current position mode
+                current_mode = self.binance.futures_get_position_mode()
+                is_dual_mode = current_mode.get('dualSidePosition', False)
                 
-                # Set margin type with multiple attempts
-                margin_set = False
+                # Determine if we need to change
+                need_dual = (position_mode == "ISOLATED")
                 
-                # Try different parameter names
-                param_variations = [
-                    {'symbol': pair, 'marginType': margin_type},
-                    {'symbol': pair, 'margin_type': margin_type},
-                    {'symbol': pair, 'margintype': margin_type}
-                ]
-                
-                for params in param_variations:
-                    try:
-                        self.binance.futures_change_margin_type(**params)
-                        margin_set = True
-                        break
-                    except:
-                        continue
-                
-                if margin_set:
-                    successful_setups += 1
-                    self.print_color(f"✅ {pair}: 5x leverage, {margin_type} margin", self.Fore.GREEN)
+                if is_dual_mode != need_dual:
+                    self.binance.futures_change_position_mode(dualSidePosition=need_dual)
+                    self.print_color(f"✅ Position mode changed to {position_mode}", self.Fore.GREEN)
                 else:
-                    self.print_color(f"⚠️ {pair}: Margin type setup failed (but continuing)", self.Fore.YELLOW)
-                    
+                    self.print_color(f"✅ Position mode already {position_mode}", self.Fore.GREEN)
             except Exception as e:
-                error_msg = str(e)
-                if "No need to change" in error_msg or "already set" in error_msg.lower():
-                    successful_setups += 1
-                    self.print_color(f"✅ {pair}: Already setup correctly", self.Fore.GREEN)
+                if "No need to change" in str(e):
+                    self.print_color(f"✅ Position mode already set", self.Fore.GREEN)
                 else:
-                    self.print_color(f"⚠️ {pair}: {error_msg[:80]}", self.Fore.YELLOW)
-        
-        if successful_setups > 0:
-            self.print_color(f"✅ Futures setup: {successful_setups}/{len(self.available_pairs)} pairs ready", 
-                           self.Fore.GREEN + self.Style.BRIGHT)
-        else:
-            self.print_color("⚠️ Futures setup had issues but continuing...", self.Fore.YELLOW)
+                    self.print_color(f"⚠️ Position mode setup: {str(e)[:100]}", self.Fore.YELLOW)
             
-    except Exception as e:
-        self.print_color(f"⚠️ Futures setup error (continuing anyway): {e}", self.Fore.YELLOW)
+            # 2. Setup each trading pair
+            successful_setups = 0
+            for pair in self.available_pairs:
+                try:
+                    # Set leverage
+                    self.binance.futures_change_leverage(symbol=pair, leverage=5)
+                    
+                    # Set margin type with multiple attempts
+                    margin_set = False
+                    
+                    # Try different parameter names
+                    param_variations = [
+                        {'symbol': pair, 'marginType': margin_type},
+                        {'symbol': pair, 'margin_type': margin_type},
+                        {'symbol': pair, 'margintype': margin_type}
+                    ]
+                    
+                    for params in param_variations:
+                        try:
+                            self.binance.futures_change_margin_type(**params)
+                            margin_set = True
+                            break
+                        except:
+                            continue
+                    
+                    if margin_set:
+                        successful_setups += 1
+                        self.print_color(f"✅ {pair}: 5x leverage, {margin_type} margin", self.Fore.GREEN)
+                    else:
+                        self.print_color(f"⚠️ {pair}: Margin type setup failed (but continuing)", self.Fore.YELLOW)
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    if "No need to change" in error_msg or "already set" in error_msg.lower():
+                        successful_setups += 1
+                        self.print_color(f"✅ {pair}: Already setup correctly", self.Fore.GREEN)
+                    else:
+                        self.print_color(f"⚠️ {pair}: {error_msg[:80]}", self.Fore.YELLOW)
+            
+            if successful_setups > 0:
+                self.print_color(f"✅ Futures setup: {successful_setups}/{len(self.available_pairs)} pairs ready", 
+                               self.Fore.GREEN + self.Style.BRIGHT)
+            else:
+                self.print_color("⚠️ Futures setup had issues but continuing...", self.Fore.YELLOW)
+                
+        except Exception as e:
+            self.print_color(f"⚠️ Futures setup error (continuing anyway): {e}", self.Fore.YELLOW)
     
     # ==================== FIXED ERROR HANDLING ====================
     def robust_ai_exit_decision(self, pair, trade, market_data, current_level):
