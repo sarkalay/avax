@@ -1700,6 +1700,7 @@ Return JSON:
                         side=side,
                         type='MARKET',
                         quantity=closed_quantity
+                        reduceOnly=True
                     )
                 except Exception as order_err:
                     self.print_color(f"Warning: Binance order failed ({order_err}), using simulated close", self.Fore.YELLOW)
