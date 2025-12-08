@@ -388,7 +388,7 @@ class FullyAutonomous1HourAITrader:
         # 🎯 FULLY AUTONOMOUS AI TRADING PARAMETERS
         self.total_budget = 500
         self.available_budget = 500
-        self.max_position_size_percent = 10
+        self.max_position_size_percent = 6
         self.max_concurrent_trades = 4
         
         # AI can trade selected 3 major pairs only
