@@ -924,7 +924,7 @@ EXISTING POSITION:
 RULES:
 - Only trade if 1H and 4H trend align
 - Confirm entry with 15m crossover + volume spike
-- Position size: 5-10% of budget ($50 min)
+- Position size: 5-7% of budget ($25 min)
 - Leverage: 5-10x based on volatility
 - NO TP/SL - AI will close manually
 
