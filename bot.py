@@ -1699,7 +1699,7 @@ Return JSON:
                         symbol=pair,
                         side=side,
                         type='MARKET',
-                        quantity=closed_quantity
+                        quantity=closed_quantity,
                         reduceOnly=True
                     )
                 except Exception as order_err:
