@@ -600,7 +600,7 @@ class FullyAutonomous1HourAITrader:
                 "partial_percent": rule["partial"],
                 "close_type": f"FALLBACK_LEVEL_{current_level}",
                 "reasoning": f"AI failed: {rule['reason']} at +{current_level}%",
-                "confidence": 75
+                "confidence": 85
             }
         
         # Default fallback
