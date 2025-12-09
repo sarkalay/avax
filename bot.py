@@ -997,12 +997,21 @@ EXISTING POSITION:
                 
                 prompt += """
 RULES:
-- Only trade if 1H and 4H trend align
-- Confirm entry with 15m crossover + volume spike
-- MINIMUM POSITION SIZE: $25 (important!)
-- Position size: 5-7% of budget (min $25)
-- Leverage: 5-10x based on volatility
-- NO TP/SL - AI will close manually
+1. 1H and 4H trend must be identical (both bullish or both bearish)
+2. On 15-minute chart: EMA9 must have cleanly crossed EMA34 at least 3 candles ago (not just touching)
+3. 15-minute volume must be ≥ 2.8× the average of the last 30 candles
+4. 15-minute RSI:
+   - LONG  → between 48 and 70
+   - SHORT → between 30 and 52
+5. Current price must be above 1H EMA200 (for LONG) or below 1H EMA200 (for SHORT)
+6. No high-impact news within the last 30 minutes and next 30 minutes
+7. Your own confidence must be 85 or higher. If confidence < 85 → HOLD
+8. If you are not 100% sure → answer HOLD only
+   Missing 10 good trades is better than being wrong once.
+9. MINIMUM POSITION SIZE: $25 (important!)
+10. Position size: 5-7% of budget (min $25)
+11. Leverage: 2-5x based on volatility
+12. NO TP/SL - AI will close manually
 
 Return JSON:
 {
