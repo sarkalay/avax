@@ -1003,6 +1003,8 @@ RULES:
 - Position size: 5-7% of budget (min $25)
 - Leverage: 2-5x based on volatility
 - NO TP/SL - AI will close manually
+- Your own confidence must be 85 or higher
+   → If confidence < 85 → you MUST answer "HOLD"
 
 Return JSON:
 {
@@ -1010,7 +1012,7 @@ Return JSON:
     "position_size_usd": number (minimum $25),
     "entry_price": number,
     "leverage": number,
-    "confidence": 0-100,
+    "confidence": 85-100,
     "reasoning": "MTF alignment + signal + risk"
 }
 """
