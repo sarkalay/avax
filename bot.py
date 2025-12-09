@@ -1000,7 +1000,7 @@ RULES:
 - Only trade if 1H and 4H trend align
 - Confirm entry with 30m crossover + volume spike
 - MINIMUM POSITION SIZE: $25 (important!)
-- Position size: 5-7% of budget (min $25)
+- Position size: 5% of budget (min $25)
 - Leverage: 2-5x based on volatility
 - NO TP/SL - AI will close manually
 - Your own confidence must be 85 or higher
