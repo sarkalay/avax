@@ -998,6 +998,14 @@ EXISTING POSITION:
                 prompt += """
 RULES:
 - Only trade if 1H and 4H trend align
+- 15m EMA9 must have cleanly crossed EMA34 and stayed on correct side for at least 3 candles
+- 15m volume ≥ 2.8× average of last 30 candles
+- 15-MINUTE MUST NOT BE SIDEWAYS:
+   - LONG → price > EMA9 > EMA34
+   - SHORT → price < EMA9 < EMA34
+   - EMA9 and EMA34 must be at least 0.5% apart
+   - If price is between EMA9 and EMA34 → sideways → HOLD
+   - If EMA9 and EMA34 are flat or crossing repeatedly → choppy → HOLD
 - Confirm entry with 30m crossover + volume spike
 - MINIMUM POSITION SIZE: $25 (important!)
 - Position size: 5% of budget (min $25)
