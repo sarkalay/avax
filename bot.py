@@ -2800,8 +2800,8 @@ class FullyAutonomous1HourPaperTrader:
             trade['partial_close_count'] = 0
         
         partial_count = trade['partial_close_count']
-        max_partials = self.real_bot.config.get("max_partial_closes_per_trade", 3)
-        partial_percentages = self.real_bot.config.get("partial_percentages", [50, 30, 20])
+        max_partials = self.real_bot.config.get("max_partial_closes_per_trade", 2)
+        partial_percentages = self.real_bot.config.get("partial_percentages", [50, 100])
         
         # Maximum 4 partials reached, close remaining
         if partial_count >= max_partials:
