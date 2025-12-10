@@ -1614,8 +1614,8 @@ Return JSON:
             trade['partial_close_count'] = 0
         
         partial_count = trade['partial_close_count']
-        max_partials = self.config.get("max_partial_closes_per_trade", 3)
-        partial_percentages = self.config.get("partial_percentages", [50, 30, 20])
+        max_partials = self.config.get("max_partial_closes_per_trade", 2)
+        partial_percentages = self.config.get("partial_percentages", [50, 100])
         
         # အများဆုံး ၄ ခါ ရောက်ပြီဆိုရင် ကျန်တာ အကုန်ထွက်
         if partial_count >= max_partials:
