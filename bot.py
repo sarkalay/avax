@@ -1032,7 +1032,7 @@ Return JSON:
                 }
                 
                 data = {
-                    "model": "x-ai/grok-4.1-fast",
+                    "model": "deepseek/deepseek-v3.2",
                     "messages": [
                         {"role": "system", "content": "You are a fully autonomous AI trader with reverse position capability. Minimum position size is $25."},
                         {"role": "user", "content": prompt}
@@ -1041,7 +1041,7 @@ Return JSON:
                     "max_tokens": 800
                 }
                 
-                self.print_color(f"🧠 grok Analyzing {pair}...", self.Fore.MAGENTA + self.Style.BRIGHT)
+                self.print_color(f"🧠 Deepseek Analyzing {pair}...", self.Fore.MAGENTA + self.Style.BRIGHT)
                 response = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                                        headers=headers, json=data, timeout=60)
                 
@@ -1050,19 +1050,19 @@ Return JSON:
                     ai_response = result['choices'][0]['message']['content'].strip()
                     return self.parse_ai_trading_decision(ai_response, pair, current_price, current_trade)
                 else:
-                    self.print_color(f"⚠️ grok API attempt {attempt+1} failed: {response.status_code}", self.Fore.YELLOW)
+                    self.print_color(f"⚠️ Deepseek API attempt {attempt+1} failed: {response.status_code}", self.Fore.YELLOW)
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         continue
                         
             except requests.exceptions.Timeout:
-                self.print_color(f"⏰ grok timeout attempt {attempt+1}", self.Fore.YELLOW)
+                self.print_color(f"⏰ Deepseek timeout attempt {attempt+1}", self.Fore.YELLOW)
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
                     
             except Exception as e:
-                self.print_color(f"❌ grok error attempt {attempt+1}: {e}", self.Fore.RED)
+                self.print_color(f"❌ Deepseek error attempt {attempt+1}: {e}", self.Fore.RED)
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
@@ -1140,7 +1140,7 @@ Return JSON:
             }
             
             data = {
-                "model": "x-ai/grok-4.1-fast",
+                "model": "deepseek/deepseek-v3.2",
                 "messages": [
                     {"role": "system", "content": f"You are an AI trader making specific exit decisions at each {self.percent_increment}% profit level. Be precise about partial profit percentages."},
                     {"role": "user", "content": prompt}
@@ -1499,7 +1499,7 @@ Return JSON:
                     }
                     
                     data = {
-                        "model": "x-ai/grok-4.1-fast",
+                        "model": "deepseek/deepseek-v3.2",
                         "messages": [
                             {"role": "system", "content": "You are an AI trader considering time-based exits."},
                             {"role": "user", "content": prompt}
@@ -1969,7 +1969,7 @@ Return JSON:
             reasoning = ai_decision["reasoning"]
             
             if decision == "HOLD" or position_size_usd <= 0:
-                self.print_color(f"🟡 grok decides to HOLD {pair}", self.Fore.YELLOW)
+                self.print_color(f"🟡 Deepseek decides to HOLD {pair}", self.Fore.YELLOW)
                 return False
             
             if pair in self.ai_opened_trades:
@@ -1991,7 +1991,7 @@ Return JSON:
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if decision == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if decision == 'LONG' else "🔴 SHORT"
             
-            self.print_color(f"\n🤖 grok TRADE EXECUTION ({self.percent_increment}% AI CHECK SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"\n🤖 Deepseek TRADE EXECUTION ({self.percent_increment}% AI CHECK SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color("=" * 80, self.Fore.CYAN)
             self.print_color(f"{direction_icon} {pair}", direction_color)
             self.print_color(f"POSITION SIZE: ${position_size_usd:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
@@ -2265,7 +2265,7 @@ Return JSON:
                 if self.cycle_count % 8 == 0:
                     self.analytics.show_analytics_dashboard()
             
-            self.print_color(f"\n🔍 grok SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
+            self.print_color(f"\n🔍 Deepseek SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
             
             qualified_signals = 0
             for pair in self.available_pairs:
@@ -2286,7 +2286,7 @@ Return JSON:
                             time.sleep(2)
             
             if qualified_signals == 0:
-                self.print_color("No qualified grok signals this cycle", self.Fore.YELLOW)
+                self.print_color("No qualified Deepseek signals this cycle", self.Fore.YELLOW)
                 
         except Exception as e:
             self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
@@ -3021,7 +3021,7 @@ class FullyAutonomous1HourPaperTrader:
             reasoning = ai_decision["reasoning"]
             
             if decision == "HOLD" or position_size_usd <= 0:
-                self.real_bot.print_color(f"🟡 PAPER: grok decides to HOLD {pair}", self.Fore.YELLOW)
+                self.real_bot.print_color(f"🟡 PAPER: Deepseek decides to HOLD {pair}", self.Fore.YELLOW)
                 return False
             
             if pair in self.paper_positions:
@@ -3300,7 +3300,7 @@ class FullyAutonomous1HourPaperTrader:
                 if self.paper_cycle_count % 8 == 0:
                     self.show_paper_analytics()
             
-            self.real_bot.print_color(f"\nPAPER: grok SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
+            self.real_bot.print_color(f"\nPAPER: Deepseek SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
             
             qualified_signals = 0
             for pair in self.available_pairs:
@@ -3321,7 +3321,7 @@ class FullyAutonomous1HourPaperTrader:
                             time.sleep(1)
             
             if qualified_signals == 0:
-                self.real_bot.print_color("PAPER: No qualified grok signals this cycle", self.Fore.YELLOW)
+                self.real_bot.print_color("PAPER: No qualified Deepseek signals this cycle", self.Fore.YELLOW)
                     
         except Exception as e:
             self.real_bot.print_color(f"PAPER: Trading cycle error: {e}", self.Fore.RED)
