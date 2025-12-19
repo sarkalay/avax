@@ -399,7 +399,7 @@ class FullyAutonomous1HourAITrader:
         
         # AI can trade selected 3 major pairs only
         self.available_pairs = [
-            "SOLUSDT", "AVAXUSDT", "LINKUSDT"
+            "SOLUSDC", "AVAXUSDC", "LINKUSDC"
         ]
         
         # Track AI-opened trades
@@ -815,8 +815,8 @@ class FullyAutonomous1HourAITrader:
                     continue
         
         fallback_prices = {
-            "SOLUSDT": 140.0, "AVAXUSDT": 15.0, 
-            "LINKUSDT": 13.0
+            "SOLUSDC": 140.0, "AVAXUSDC": 15.0, 
+            "LINKUSDC": 13.0
         }
         return fallback_prices.get(pair, 100.0)
     
@@ -2481,7 +2481,7 @@ class FullyAutonomous1HourPaperTrader:
         self.paper_positions = {}
         self.paper_history_file = "fully_autonomous_1hour_paper_trading_history.json"
         self.paper_history = self.load_paper_history()
-        self.available_pairs = ["SOLUSDT", "AVAXUSDT", "LINKUSDT"]
+        self.available_pairs = ["SOLUSDC", "AVAXUSDC", "LINKUSDC"]
         self.max_concurrent_trades = paper_config.get('max_positions', 6)
         
         # Analytics for paper trading
